@@ -217,4 +217,31 @@ describe("AnthropicProvider", () => {
 			expect(usage).toBeNull();
 		});
 	});
+
+	describe("prepareHeaders — API key accounts (claude-console-api)", () => {
+		// Regression test: getValidAccessToken returns "" for API key providers so that
+		// prepareHeaders routes to x-api-key, not Authorization: Bearer.
+		// Before the fix, getValidAccessToken returned account.api_key as accessToken,
+		// causing it to be sent as "Authorization: Bearer <api_key>" which Anthropic rejects.
+
+		it("sets x-api-key when accessToken is empty string and apiKey is provided", () => {
+			const headers = provider.prepareHeaders(
+				new Headers(),
+				"",
+				"sk-ant-api03-test-key",
+			);
+			expect(headers.get("x-api-key")).toBe("sk-ant-api03-test-key");
+			expect(headers.get("authorization")).toBeNull();
+		});
+
+		it("does NOT add oauth beta header for API key accounts", () => {
+			const headers = provider.prepareHeaders(
+				new Headers(),
+				"",
+				"sk-ant-api03-test-key",
+			);
+			expect(headers.get("anthropic-beta")).toBeNull();
+		});
+
+	});
 });

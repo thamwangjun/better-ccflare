@@ -355,7 +355,8 @@ export async function getValidAccessToken(
 	account: Account,
 	ctx: ProxyContext,
 ): Promise<string> {
-	// For API key providers, return the API key directly without OAuth token refresh logic
+	// For API key providers, return empty string so prepareHeaders uses the apiKey param
+	// (which sets x-api-key header) rather than Authorization: Bearer
 	if (
 		account.provider === "openai-compatible" ||
 		account.provider === "zai" ||
@@ -364,7 +365,7 @@ export async function getValidAccessToken(
 		account.provider === "minimax"
 	) {
 		if (account.api_key) {
-			return account.api_key;
+			return "";
 		}
 		throw new Error(`No API key available for account ${account.name}`);
 	}
