@@ -15,6 +15,7 @@ export const PROVIDER_NAMES = {
 	OPENROUTER: "openrouter",
 	ALIBABA_CODING_PLAN: "alibaba-coding-plan",
 	CODEX: "codex",
+	QWEN: "qwen",
 } as const;
 
 export type ProviderName = (typeof PROVIDER_NAMES)[keyof typeof PROVIDER_NAMES];
@@ -57,7 +58,7 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		defaultEndpoint: "https://api.anthropic.com",
 	},
 	[PROVIDER_NAMES.ZAI]: {
-		requiresSessionTracking: false, // Zai is typically pay-as-you-go
+		requiresSessionTracking: true, // Zai has 5-hour session windows
 		supportsUsageTracking: true, // Zai supports usage tracking via monitoring API
 		supportsOAuth: false, // Zai uses API key authentication
 		defaultEndpoint: "https://api.z.ai/api/anthropic",
@@ -122,6 +123,12 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		supportsUsageTracking: false, // Usage tracked via response headers, not a polling API
 		supportsOAuth: true, // Codex uses OpenAI OAuth with PKCE
 		defaultEndpoint: "https://chatgpt.com/backend-api/codex/responses",
+	},
+	[PROVIDER_NAMES.QWEN]: {
+		requiresSessionTracking: false, // Qwen OAuth is quota-based, no session stickiness
+		supportsUsageTracking: true, // Usage tracked via response body (OpenAI-compatible)
+		supportsOAuth: true, // Qwen uses OAuth 2.0 device code flow
+		defaultEndpoint: "https://dashscope.aliyuncs.com/compatible-mode/v1",
 	},
 } as const satisfies Record<ProviderName, ProviderConfig>;
 

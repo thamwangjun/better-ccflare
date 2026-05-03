@@ -67,7 +67,8 @@ export class SessionStrategy implements LoadBalancingStrategy {
 
 	/**
 	 * Determines if an account has an active session based on provider requirements
-	 * For Anthropic providers: checks if session is within the 5-hour window
+	 * For Anthropic providers: checks if session is within the 5-hour window AND
+	 * the account is not currently rate-limited
 	 * For other providers: always returns false (no session stickiness for pay-as-you-go)
 	 * @param account The account to check
 	 * @param now Current timestamp
@@ -77,6 +78,18 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		// Non-Anthropic providers (API-key-based, etc.) should not have persistent sessions
 		// since they're pay-as-you-go and don't benefit from session stickiness
 		if (!requiresSessionDurationTracking(account.provider)) {
+			return false;
+		}
+
+		// An account that is currently rate-limited has no usable session, even
+		// if its session_start is still inside the 5h Anthropic session window.
+		// Treating it as active would re-pin requests to a known-throttled
+		// upstream for the entire rate-limit window. Note we do NOT clear
+		// session_start here — when the rate-limit window elapses the session
+		// is conceptually still valid (5h Anthropic prompt-cache windows are
+		// independent of rate-limit windows), so we'll resume the cached
+		// session naturally on the next request after recovery. See issue #115.
+		if (account.rate_limited_until && account.rate_limited_until > now) {
 			return false;
 		}
 
@@ -111,31 +124,63 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			return availabilityCache.get(account.id) || false;
 		};
 
-		// Check for higher priority accounts that have become available due to rate limit reset
+		// Check for higher priority accounts that have become available due to rate limit reset.
+		// Iterate through all candidates in priority order to find the first usable one.
 		const fallbackCandidates = this.checkForAutoFallbackAccounts(accounts, now);
-		if (fallbackCandidates.length > 0) {
-			const chosenFallback = fallbackCandidates[0];
+		let chosenFallback: Account | null = null;
+		const skippedByReason = new Map<string, string[]>();
+		for (const candidate of fallbackCandidates) {
+			// If the candidate is paused, only auto-unpause if it was paused due to
+			// overage, or `rate_limit_window` (reserved/future pause reason) — never auto-unpause
+			// manual or failure_threshold pauses.
+			if (candidate.paused && this.store?.resumeAccount) {
+				const canAutoUnpause =
+					!candidate.pause_reason ||
+					candidate.pause_reason === "overage" ||
+					candidate.pause_reason === "rate_limit_window";
+				if (canAutoUnpause) {
+					this.log.info(
+						`Unpausing account ${candidate.name} due to auto-fallback reactivation`,
+					);
+					this.store.resumeAccount(candidate.id);
+					candidate.paused = false;
+					// Invalidate the cache so getCachedAvailability reflects the unpause
+					availabilityCache.delete(candidate.id);
+				} else {
+					const reason = candidate.pause_reason || "unknown";
+					if (!skippedByReason.has(reason)) {
+						skippedByReason.set(reason, []);
+					}
+					skippedByReason.get(reason)?.push(candidate.name);
+					continue;
+				}
+			}
+
+			if (getCachedAvailability(candidate)) {
+				chosenFallback = candidate;
+				break;
+			}
+		}
+
+		for (const [reason, names] of skippedByReason) {
+			this.log.info(
+				`Skipping auto-unpause of ${names.length} account(s) paused for '${reason}': ${names.join(", ")}`,
+			);
+		}
+
+		if (chosenFallback !== null) {
 			if (!bypassSession) {
 				this.resetSessionIfExpired(chosenFallback);
 			}
 			this.log.info(
 				`Auto-fallback triggered to account ${chosenFallback.name} (priority: ${chosenFallback.priority}, auto-fallback enabled)`,
 			);
-
-			// If the chosen fallback account was paused, unpause it since we're reactivating it
-			if (chosenFallback.paused && this.store?.resumeAccount) {
-				this.log.info(
-					`Unpausing account ${chosenFallback.name} due to auto-fallback reactivation`,
-				);
-				this.store.resumeAccount(chosenFallback.id);
-				chosenFallback.paused = false;
-			}
-
-			// Return fallback account first, then others sorted by priority
-			const others = accounts
-				.filter((a) => a.id !== chosenFallback.id && getCachedAvailability(a))
+			// Return all available accounts sorted by priority — chosenFallback will appear
+			// first naturally if it is the highest-priority available account, avoiding
+			// priority inversion when other accounts rank higher.
+			return accounts
+				.filter((a) => getCachedAvailability(a))
 				.sort((a, b) => a.priority - b.priority);
-			return [chosenFallback, ...others];
 		}
 
 		// Find account with active session (most recent session_start within window)
@@ -200,10 +245,22 @@ export class SessionStrategy implements LoadBalancingStrategy {
 		}
 
 		// No active session or active account is rate limited
-		// Filter available accounts and sort by priority (lower number = higher priority)
+		// Filter available accounts and sort by priority (lower number = higher priority).
+		// Within the same priority, break ties by utilization (ascending) so that the
+		// account with the most remaining capacity is chosen first.
 		const available = accounts
 			.filter((a) => getCachedAvailability(a))
-			.sort((a, b) => a.priority - b.priority);
+			.sort((a, b) => {
+				if (a.priority !== b.priority) return a.priority - b.priority;
+				// Treat null as 0: an account with no usage data is assumed fresh
+				// (maximum remaining capacity). This prevents newly-added accounts
+				// from being permanently sidelined until all others expire.
+				const utilA =
+					this.store?.getAccountUtilization?.(a.id, a.provider) ?? 0;
+				const utilB =
+					this.store?.getAccountUtilization?.(b.id, b.provider) ?? 0;
+				return utilA - utilB;
+			});
 
 		if (available.length === 0) return [];
 
@@ -236,10 +293,12 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			// This allows paused accounts with auto-fallback to be considered for reactivation
 
 			// Check if the API usage window has reset for auto-fallback
-			// Usage windows: Anthropic accounts with proactive rate limit headers (usage-based accounts)
-			// No usage windows: Other account types or Anthropic console keys without usage windows
-			const anthropicWindowReset =
-				account.provider === PROVIDER_NAMES.ANTHROPIC && // Only for Anthropic accounts with usage windows
+			const supportsWindowReset =
+				account.provider === PROVIDER_NAMES.ANTHROPIC ||
+				account.provider === PROVIDER_NAMES.CODEX ||
+				account.provider === PROVIDER_NAMES.ZAI;
+			const providerWindowReset =
+				supportsWindowReset &&
 				account.rate_limit_reset &&
 				account.rate_limit_reset < now - 1000; // 1 second buffer for clock skew protection
 
@@ -247,7 +306,7 @@ export class SessionStrategy implements LoadBalancingStrategy {
 			const notRateLimited =
 				!account.rate_limited_until || account.rate_limited_until <= now;
 
-			return anthropicWindowReset && notRateLimited;
+			return providerWindowReset && notRateLimited;
 		});
 
 		if (resetAccounts.length === 0) return [];

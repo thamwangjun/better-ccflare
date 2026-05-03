@@ -2,24 +2,21 @@
 
 Load balancer proxy for Claude distributing requests across multiple account providers to avoid rate limiting.
 
+## ⚠️ CRITICAL: Testing Restrictions
+
+**NEVER curl the Anthropic endpoint** — not directly, and not via the proxy using the `claude` account. Real Anthropic accounts can get banned for automated/scripted usage. The `claude` account must only be used through real Claude Code. For testing, always use non-Anthropic accounts (ollama, litellm, omniroute, etc.) and force-route with `x-better-ccflare-account-id`.
+
 ## ⚠️ CRITICAL: File Exclusions
 
 **README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
 
-**NEVER TOUCH `inline-worker.ts`** - This file is auto-generated during build and MUST be completely ignored:
-- ❌ Do NOT read it
-- ❌ Do NOT edit it
-- ❌ Do NOT stage/commit it (`git add`)
-- ❌ Do NOT reference it in any tool calls
-- ❌ Do NOT include it in search results
-- ❌ If accidentally modified, revert it immediately with `git checkout -- packages/proxy/src/inline-worker.ts`
-
-When using glob patterns or file searches, explicitly exclude this file.
+**NEVER TOUCH `inline-worker.ts`** — auto-generated, must be excluded from all reads, edits, searches, and commits.
+If accidentally modified: `git checkout -- packages/proxy/src/inline-worker.ts`
 
 ## Branch Management
-- Feature branches: Create from `main`. Pull latest first: `git checkout main && git pull origin main && git checkout -b feature/name`
-- Hotfixes: Create from `main`. Pull latest first: `git checkout main && git pull origin main && git checkout -b hotfix/name`
-- PRs: Use `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`. Never make PR changes on main.
+Always branch from `main` with a fresh pull. Never make changes directly on main.
+PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
+- If `git push origin main` fails with `src refspec main matches more than one` (branch/tag name collision), push explicitly: `git push origin refs/heads/main:refs/heads/main`.
 
 ## Issue Management
 - Never close issues automatically
@@ -29,6 +26,17 @@ When using glob patterns or file searches, explicitly exclude this file.
 - Default: `~/.config/better-ccflare/better-ccflare.db`
 - Custom: Set `BETTER_CCFLARE_DB_PATH=/path/to/dev.db` in env or .env
 - Query: `sqlite3 ~/.config/better-ccflare/better-ccflare.db "SELECT name, provider, custom_endpoint FROM accounts;"`
+
+## Subagents for Multi-Task Work
+When a session involves multiple independent tasks, always spawn subagents rather than doing them sequentially in the main context. This conserves tokens and keeps the main context clean. Tasks don't need to run in parallel — the goal is context isolation, not speed.
+
+**Default to subagents for any task that can be handed off:** code changes, research, code review, test runs, exploration, impact analysis, and any work that doesn't require direct interaction with the user mid-task. Only work inline in the main session for short, one-off responses or when you need to ask the user something before proceeding.
+
+## Plan Execution
+When executing implementation plans, always use subagent-driven development (superpowers:subagent-driven-development). Never execute plans inline in the main session. Always dispatch a fresh subagent per task.
+
+## Test-Driven Development
+When creating new functionality: write tests first, then implement, then run tests.
 
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
@@ -44,11 +52,9 @@ Always run: `bun run lint && bun run typecheck && bun run format`
 - **NEVER bump the version** — version bumps are handled automatically by the release system
 
 ## Version Updates
-If a manual version bump is ever needed, update in both files:
-- `package.json` (root)
-- `apps/cli/package.json`
-
-Note: `CLAUDE_CLI_VERSION` in `packages/core/src/version.ts` tracks the official Claude Code CLI version and is auto-updated by the pre-push hook from npm registry.
+**NEVER bump the version** — handled automatically by the release system.
+`CLAUDE_CLI_VERSION` in `packages/core/src/version.ts` tracks Claude Code CLI version (auto-updated by pre-push hook).
+If ever needed manually: update both `package.json` (root) and `apps/cli/package.json`.
 
 ## Commands
 
@@ -56,7 +62,7 @@ Note: `CLAUDE_CLI_VERSION` in `packages/core/src/version.ts` tracks the official
 - First run: `bun run build` (builds dashboard/CLI)
 - Start: `bun start` (port 8080) or `bun start --serve --port 8081` (testing)
 - Startup: Takes ~15 seconds, wait before testing with curl
-- Production: systemd service uses npm version. Test local changes on port 8081, NOT via `systemctl restart`
+- Production: runs on port 8082. Test local changes on port 8081.
 
 ### Account Management
 - Add: `bun run cli --add-account <name> --mode <claude-oauth|console|zai|minimax|anthropic-compatible|openai-compatible> --priority <number>`
@@ -78,6 +84,13 @@ Always use model `z-ai/glm-4.5-air:free`:
 curl -X POST http://localhost:8081/v1/messages -H "Content-Type: application/json" -H "Authorization: Bearer test" -d '{"model":"z-ai/glm-4.5-air:free","messages":[{"role":"user","content":"test"}],"max_tokens":10}'
 ```
 
+## Environment
+- OS timezone is UTC+2. Timestamps in logs and `/tmp` files are UTC — add 2 hours for local time.
+
+## Qwen Provider
+- When working on the Qwen provider or streaming transform, **always mirror the qwen-code implementation** at `/home/tom/git_repos/qwen-code/`. Check how qwen-code handles the same scenario before implementing.
+- Qwen/DashScope sends incremental tool call argument chunks (not cumulative like standard OpenAI). The streaming transform buffers all chunks and emits complete JSON at stream end, matching `StreamingToolCallParser` in qwen-code.
+
 ## Commit Message Categories
 Automated release system uses commit prefixes for changelog:
 - Features: `feat:|add:|new:`
@@ -88,7 +101,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (2316 symbols, 6005 relationships, 174 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (5058 symbols, 11350 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -176,8 +189,13 @@ To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.
 
 ## CLI
 
-- Re-index: `npx gitnexus analyze`
-- Check freshness: `npx gitnexus status`
-- Generate docs: `npx gitnexus wiki`
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
 
 <!-- gitnexus:end -->

@@ -21,7 +21,7 @@ export {
 export * from "./lifecycle";
 
 // Export types for model mappings - defined inline in model-mappings.ts
-export type ModelMapping = { [anthropicModel: string]: string };
+export type ModelMapping = { [anthropicModel: string]: string | string[] };
 export type ModelMappingData = {
 	endpoint?: string;
 	modelMappings?: ModelMapping;
@@ -36,10 +36,10 @@ export {
 } from "./interval-manager";
 export {
 	createCustomEndpointData,
-	DEFAULT_MODEL_MAPPINGS,
 	getAllowedModelsMessage,
 	getEndpointUrl,
 	getModelFamily,
+	getModelList,
 	getModelMappings,
 	isValidClaudeModel,
 	KNOWN_PATTERNS,

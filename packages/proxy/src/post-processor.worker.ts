@@ -5,7 +5,11 @@ import {
 	estimateCostUSD,
 	TIME_CONSTANTS,
 } from "@better-ccflare/core";
-import { AsyncDbWriter, DatabaseOperations } from "@better-ccflare/database";
+import {
+	AsyncDbWriter,
+	DatabaseOperations,
+	initPayloadEncryption,
+} from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { NO_ACCOUNT_ID, type RequestResponse } from "@better-ccflare/types";
 import { formatCost } from "@better-ccflare/ui-common";
@@ -14,9 +18,12 @@ import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
 import { EMBEDDED_TIKTOKEN_WASM } from "./embedded-tiktoken-wasm";
 import { combineChunks } from "./stream-tee";
 import type {
+	AckMessage,
 	ChunkMessage,
 	ConfigUpdateMessage,
 	EndMessage,
+	ReadyMessage,
+	ShutdownCompleteMessage,
 	StartMessage,
 	SummaryMessage,
 	WorkerMessage,
@@ -42,6 +49,8 @@ interface RequestState {
 	lastActivity: number;
 	createdAt: number; // TTL tracking
 	agentUsed?: string;
+	project?: string | null;
+	billingType?: string;
 	firstTokenTimestamp?: number;
 	lastTokenTimestamp?: number;
 	providerFinalOutputTokens?: number;
@@ -59,7 +68,7 @@ log.info("Post-processor worker started");
 const MAX_REQUESTS_MAP_SIZE = 10000;
 const REQUEST_TTL_MS = 2 * 60 * 1000; // 2 minutes - hard limit for request lifecycle
 const MAX_RESPONSE_BODY_BYTES = 256 * 1024; // 256KB - cap stored response body
-const MAX_REQUEST_BODY_BYTES = 256 * 1024; // 256KB - cap stored request body
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024; // 4MB - afterburn needs full conversation history
 
 // Initialize tiktoken encoder (cl100k_base is used for Claude models)
 // Using embedded WASM to avoid "Missing tiktoken_bg.wasm" errors in bunx
@@ -81,11 +90,16 @@ let tokenEncoder: Tiktoken | null = null;
 		);
 
 		log.info("Tiktoken encoder initialized successfully with embedded WASM");
+		self.postMessage({ type: "ready" } satisfies ReadyMessage);
 	} catch (error) {
 		log.error("Failed to initialize tiktoken encoder:", error);
 		console.error("[WORKER] Tiktoken initialization failed:", error);
 	}
 })();
+
+// CRITICAL: Bun workers have isolated module scopes — encryption MUST be
+// initialized inside the worker, not just on the main thread.
+await initPayloadEncryption();
 
 // Initialize database connection for worker
 const dbOps = new DatabaseOperations();
@@ -114,6 +128,66 @@ function shouldLogRequest(path: string, status: number): boolean {
 		return false;
 	}
 	return true;
+}
+
+// Project names are persisted to a single TEXT column and surfaced in the UI.
+// Cap length and strip control chars so a hostile system prompt can't smuggle
+// newlines, ANSI escapes, or megabyte-long blobs into the database.
+const PROJECT_NAME_MAX_LEN = 64;
+
+function sanitizeProjectName(raw: string | undefined | null): string | null {
+	if (!raw) return null;
+	// Strip ASCII control chars (incl. newlines/tabs) — keep Unicode letters,
+	// dashes, dots, and spaces that real project directories use.
+	// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping them is the point
+	const cleaned = raw.replace(/[\x00-\x1F\x7F]/g, "").trim();
+	if (!cleaned) return null;
+	return cleaned.length > PROJECT_NAME_MAX_LEN
+		? cleaned.slice(0, PROJECT_NAME_MAX_LEN)
+		: cleaned;
+}
+
+/**
+ * Extract a project name from a Claude API request.
+ *
+ * Resolution order:
+ *  1. Case-insensitive `x-project` request header
+ *  2. Workspace path embedded in the system prompt
+ *     (e.g. /Users/me/Desktop/MyProj/...)
+ *  3. First Markdown H1 heading in the system prompt (if reasonable)
+ *
+ * All return values are sanitized (control chars stripped, length-capped).
+ * Returns null when no project can be inferred.
+ */
+function extractProjectFromRequest(startMessage: StartMessage): string | null {
+	if (startMessage.requestHeaders) {
+		// The Web Headers API normalizes keys to lowercase, but defensively
+		// match case-insensitively in case the worker receives a plain object.
+		const headerProject = Object.entries(startMessage.requestHeaders).find(
+			([k]) => k.toLowerCase() === "x-project",
+		)?.[1];
+		const sanitizedHeader = sanitizeProjectName(headerProject);
+		if (sanitizedHeader) return sanitizedHeader;
+	}
+
+	const systemPrompt = _extractSystemPrompt(startMessage.requestBody);
+	if (!systemPrompt) return null;
+
+	const pathMatch = systemPrompt.match(
+		/\/(?:Users|home)\/[^/]+\/(?:Desktop|projects|repos|src)\/([^/]+)\//,
+	);
+	const sanitizedPath = sanitizeProjectName(pathMatch?.[1]);
+	if (sanitizedPath) return sanitizedPath;
+
+	const headingMatch = systemPrompt.match(/^#\s+(.+?)$/m);
+	if (headingMatch) {
+		const heading = sanitizeProjectName(headingMatch[1]);
+		if (heading && !heading.toLowerCase().startsWith("claude")) {
+			return heading;
+		}
+	}
+
+	return null;
 }
 
 // Extract system prompt from request body
@@ -150,11 +224,20 @@ function _extractSystemPrompt(requestBody: string | null): string | null {
 
 // Parse SSE lines to extract usage (reuse existing logic)
 function parseSSELine(line: string): { event?: string; data?: string } {
-	if (line.startsWith("event: ")) {
-		return { event: line.slice(7).trim() };
+	// Handle both "event: message_start" and "event:message_start" formats
+	// Some providers use no space after colon, Anthropic uses space
+	if (line.startsWith("event: ") || line.startsWith("event:")) {
+		const event = line.startsWith("event: ")
+			? line.slice(7).trim()
+			: line.slice(6).trim();
+		return { event };
 	}
-	if (line.startsWith("data: ")) {
-		return { data: line.slice(6).trim() };
+	// Handle both "data: {...}" and "data:{...}" formats
+	if (line.startsWith("data: ") || line.startsWith("data:")) {
+		const data = line.startsWith("data: ")
+			? line.slice(6).trim()
+			: line.slice(5).trim();
+		return { data };
 	}
 	return {};
 }
@@ -194,12 +277,19 @@ function extractUsageFromJson(
 	state.usage.totalTokens = prompt + completion;
 }
 
-function extractUsageFromData(data: string, state: RequestState): void {
+function extractUsageFromData(
+	data: string,
+	eventType: string,
+	state: RequestState,
+): void {
 	try {
 		const parsed = JSON.parse(data);
 
-		// Handle message_start
-		if (parsed.type === "message_start") {
+		// Handle message_start - check both parsed.type and eventType
+		// (Some providers put type in event line, Anthropic puts it in JSON)
+		const isMessageStart =
+			parsed.type === "message_start" || eventType === "message_start";
+		if (isMessageStart) {
 			if (parsed.message?.usage) {
 				const usage = parsed.message.usage;
 				state.usage.inputTokens = usage.input_tokens || 0;
@@ -218,8 +308,10 @@ function extractUsageFromData(data: string, state: RequestState): void {
 			state.firstTokenTimestamp = Date.now();
 		}
 
-		// Handle message_delta - provider's authoritative token counts AND end time
-		if (parsed.type === "message_delta") {
+		// Handle message_delta - check both parsed.type and eventType
+		const isMessageDelta =
+			parsed.type === "message_delta" || eventType === "message_delta";
+		if (isMessageDelta) {
 			state.lastTokenTimestamp = Date.now();
 
 			if (parsed.usage) {
@@ -322,12 +414,17 @@ function processStreamChunk(chunk: Uint8Array, state: RequestState): void {
 		if (parsed.event) {
 			state.currentEvent = parsed.event;
 		} else if (parsed.data && state.currentEvent) {
-			extractUsageFromData(parsed.data, state);
+			extractUsageFromData(parsed.data, state.currentEvent, state);
 		}
 	}
 }
 
 async function handleStart(msg: StartMessage): Promise<void> {
+	self.postMessage({
+		type: "ack",
+		messageId: msg.messageId,
+	} satisfies AckMessage);
+
 	// Check if we should skip logging this request
 	const shouldSkip = !shouldLogRequest(msg.path, msg.responseStatus);
 
@@ -376,6 +473,55 @@ async function handleStart(msg: StartMessage): Promise<void> {
 		log.debug(`Agent '${msg.agentUsed}' used for request ${msg.requestId}`);
 	}
 
+	// Extract project name (header or system prompt)
+	state.project = extractProjectFromRequest(msg);
+	if (state.project) {
+		log.debug(
+			`Project '${state.project}' extracted for request ${msg.requestId}`,
+		);
+	}
+
+	// Detect billing type from response headers
+	const overageInUse =
+		msg.responseHeaders["anthropic-ratelimit-unified-overage-in-use"];
+	const overageStatus =
+		msg.responseHeaders["anthropic-ratelimit-unified-overage-status"];
+	if (overageInUse === "true") {
+		state.billingType = "overage";
+		// Auto-pause on overage: if the account has auto_pause_on_overage enabled and we're
+		// in overage mode, pause the account so future requests route to other accounts
+		if (msg.accountAutoPauseOnOverageEnabled === 1 && msg.accountId) {
+			const accountId = msg.accountId;
+			const accountName = msg.accountName || "unknown";
+			log.info(
+				`Auto-pausing account '${accountName}' (${accountId}) due to overage detection (auto-pause-on-overage enabled)`,
+			);
+			// Note: dbOps may not be fully initialized in the worker yet; use the asyncWriter queue
+			asyncWriter.enqueue(async () => {
+				await dbOps.pauseAccount(accountId, "overage");
+			});
+		}
+	} else if (
+		overageStatus === "rejected" ||
+		overageStatus === "org_level_disabled"
+	) {
+		state.billingType = "plan";
+	} else if (msg.accountBillingType) {
+		// Account has explicit billing type override
+		state.billingType = msg.accountBillingType;
+	} else {
+		// Providers with subscription plans default to "plan" billing;
+		// all others (anthropic-compatible, openai-compatible, etc.) are API
+		const planProviders = new Set([
+			"anthropic",
+			"zai",
+			"alibaba-coding-plan",
+			"qwen",
+			"codex",
+		]);
+		state.billingType = planProviders.has(msg.providerName) ? "plan" : "api";
+	}
+
 	requests.set(msg.requestId, state);
 
 	// Skip all database operations for ignored requests
@@ -394,6 +540,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 			`Saving request meta for ${msg.requestId} (${msg.method} ${msg.path})`,
 		);
 	}
+	const projectAtStart = state.project ?? null;
 	asyncWriter.enqueue(async () => {
 		try {
 			await dbOps.saveRequestMeta(
@@ -405,6 +552,7 @@ async function handleStart(msg: StartMessage): Promise<void> {
 				msg.timestamp,
 				msg.apiKeyId || undefined,
 				msg.apiKeyName || undefined,
+				projectAtStart,
 			);
 			if (
 				process.env.DEBUG?.includes("worker") ||
@@ -598,6 +746,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	) {
 		log.debug(`Saving final request data for ${startMessage.requestId}`);
 	}
+	const projectAtEnd = state.project ?? null;
 	asyncWriter.enqueue(async () =>
 		dbOps.saveRequest(
 			startMessage.requestId,
@@ -630,6 +779,9 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			state.agentUsed,
 			startMessage.apiKeyId || undefined,
 			startMessage.apiKeyName || undefined,
+			projectAtEnd,
+			state.billingType,
+			startMessage.comboName || null,
 		),
 	);
 
@@ -674,6 +826,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			success: msg.success,
 			isStream: startMessage.isStream,
 			retry: startMessage.retryAttempt,
+			project: state.project ?? undefined,
 		},
 	});
 
@@ -727,6 +880,9 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		tokensPerSecond: state.usage.tokensPerSecond,
 		apiKeyId: startMessage.apiKeyId || undefined,
 		apiKeyName: startMessage.apiKeyName || undefined,
+		project: state.project ?? undefined,
+		billingType: state.billingType,
+		comboName: startMessage.comboName || undefined,
 	};
 
 	self.postMessage({
@@ -746,6 +902,9 @@ async function handleShutdown(): Promise<void> {
 
 	await asyncWriter.dispose();
 	dbOps.close();
+	self.postMessage({
+		type: "shutdown-complete",
+	} satisfies ShutdownCompleteMessage);
 	// Worker will be terminated by main thread
 }
 

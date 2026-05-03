@@ -1,16 +1,27 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { RuntimeConfig } from "@better-ccflare/config";
 import type { Disposable } from "@better-ccflare/core";
-import type { Account, StrategyStore } from "@better-ccflare/types";
+import type {
+	Account,
+	Combo,
+	ComboFamily,
+	ComboFamilyAssignment,
+	ComboSlot,
+	ComboWithSlots,
+	StrategyStore,
+} from "@better-ccflare/types";
 import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
+import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
 import { ensureSchemaPg, runMigrationsPg } from "./migrations-pg";
 import { resolveDbPath } from "./paths";
 import { AccountRepository } from "./repositories/account.repository";
 import { AgentPreferenceRepository } from "./repositories/agent-preference.repository";
 import { ApiKeyRepository } from "./repositories/api-key.repository";
+import { ComboRepository } from "./repositories/combo.repository";
 import { OAuthRepository } from "./repositories/oauth.repository";
 import {
 	type RequestData,
@@ -150,6 +161,10 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private adapter: BunSqlAdapter;
 	/** Raw bun:sqlite Database — only set in SQLite mode */
 	private sqliteDb?: Database;
+	/** Resolved path to the SQLite DB file — used by the vacuum worker */
+	private resolvedDbPath?: string;
+	/** Prevents concurrent compact() calls from spawning multiple vacuum workers */
+	private compacting = false;
 	private runtime?: RuntimeConfig;
 	private dbConfig: DatabaseConfig;
 	private retryConfig: DatabaseRetryConfig;
@@ -164,6 +179,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private stats: StatsRepository;
 	private agentPreferences: AgentPreferenceRepository;
 	private apiKeys: ApiKeyRepository;
+	private combo: ComboRepository;
 
 	constructor(
 		dbPath?: string,
@@ -213,6 +229,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		} else {
 			this.isSQLite = true;
 			const resolvedPath = dbPath ?? resolveDbPath();
+			this.resolvedDbPath = resolvedPath;
 
 			// Ensure the directory exists
 			const dir = dirname(resolvedPath);
@@ -237,6 +254,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.stats = new StatsRepository(this.adapter);
 		this.agentPreferences = new AgentPreferenceRepository(this.adapter);
 		this.apiKeys = new ApiKeyRepository(this.adapter);
+		this.combo = new ComboRepository(this.adapter);
 	}
 
 	/**
@@ -407,8 +425,8 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		);
 	}
 
-	async pauseAccount(accountId: string): Promise<void> {
-		await this.accounts.pause(accountId);
+	async pauseAccount(accountId: string, reason = "manual"): Promise<void> {
+		await this.accounts.pause(accountId, reason);
 	}
 
 	async resumeAccount(accountId: string): Promise<void> {
@@ -424,6 +442,13 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		timestamp: number,
 	): Promise<void> {
 		await this.accounts.resetSession(accountId, timestamp);
+	}
+
+	async setAccountBillingType(
+		accountId: string,
+		billingType: string | null,
+	): Promise<void> {
+		await this.accounts.setBillingType(accountId, billingType);
 	}
 
 	async updateAccountRequestCount(
@@ -447,6 +472,23 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		await this.accounts.setAutoFallbackEnabled(accountId, enabled);
 	}
 
+	async setAutoPauseOnOverageEnabled(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		await this.accounts.setAutoPauseOnOverageEnabled(accountId, enabled);
+	}
+
+	async setPeakHoursPauseEnabled(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		await this.adapter.run(
+			"UPDATE accounts SET peak_hours_pause_enabled = ? WHERE id = ?",
+			[enabled ? 1 : 0, accountId],
+		);
+	}
+
 	async hasAccountsForProvider(provider: string): Promise<boolean> {
 		return this.accounts.hasAccountsForProvider(provider);
 	}
@@ -461,6 +503,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		timestamp?: number,
 		apiKeyId?: string,
 		apiKeyName?: string,
+		project?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -473,6 +516,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					timestamp,
 					apiKeyId,
 					apiKeyName,
+					project,
 				),
 			this.retryConfig,
 			"saveRequestMeta",
@@ -493,6 +537,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		agentUsed?: string,
 		apiKeyId?: string,
 		apiKeyName?: string,
+		project?: string | null,
+		billingType?: string,
+		comboName?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -510,6 +557,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 					agentUsed,
 					apiKeyId,
 					apiKeyName,
+					project,
+					billingType,
+					comboName,
 				}),
 			this.retryConfig,
 			"saveRequest",
@@ -553,9 +603,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.requests.listPayloads(limit);
 	}
 
-	async listRequestPayloadsWithAccountNames(
-		limit = 50,
-	): Promise<Array<{ id: string; json: string; account_name: string | null }>> {
+	async listRequestPayloadsWithAccountNames(limit = 50): Promise<
+		Array<{
+			id: string;
+			json: string | null;
+			timestamp: number;
+			account_name: string | null;
+		}>
+	> {
 		return this.requests.listPayloadsWithAccountNames(limit);
 	}
 
@@ -675,7 +730,9 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		return this.requests.getRequestsByAccount(since);
 	}
 
-	// Cleanup operations (payload by age; request metadata by age; plus orphan sweep)
+	// Cleanup operations — two explicit passes:
+	// Pass 1: delete payloads older than payloadRetentionMs (+ orphan sweep)
+	// Pass 2: delete request metadata older than requestRetentionMs
 	async cleanupOldRequests(
 		payloadRetentionMs: number,
 		requestRetentionMs?: number,
@@ -684,8 +741,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		removedPayloads: number;
 	}> {
 		const now = Date.now();
-		const payloadCutoff = now - payloadRetentionMs;
 
+		// Pass 1 — payloads
+		const payloadCutoff = now - payloadRetentionMs;
+		const removedPayloadsByAge =
+			await this.requests.deletePayloadsOlderThan(payloadCutoff);
+		const removedOrphans = await this.requests.deleteOrphanedPayloads();
+
+		// Pass 2 — request metadata
 		let removedRequests = 0;
 		if (
 			typeof requestRetentionMs === "number" &&
@@ -694,13 +757,64 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			const requestCutoff = now - requestRetentionMs;
 			removedRequests = await this.requests.deleteOlderThan(requestCutoff);
 		}
-		const removedPayloadsByAge =
-			await this.requests.deletePayloadsOlderThan(payloadCutoff);
-		const removedOrphans = await this.requests.deleteOrphanedPayloads();
+
 		return {
 			removedRequests,
 			removedPayloads: removedPayloadsByAge + removedOrphans,
 		};
+	}
+
+	async getTableRowCounts(): Promise<
+		Array<{ name: string; rowCount: number; dataBytes?: number }>
+	> {
+		if (!this.adapter.isSQLite) {
+			return [];
+		}
+		try {
+			const tables = await this.adapter.query<{ name: string }>(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+			);
+			const rows = await Promise.all(
+				tables.map(async ({ name }) => {
+					const countRow = await this.adapter.get<{ rowCount: number }>(
+						`SELECT COUNT(*) AS rowCount FROM "${name}"`,
+					);
+					const rowCount = countRow?.rowCount ?? 0;
+					// Measure actual data bytes for tables with known large text/blob columns
+					if (name === "request_payloads") {
+						const sizeRow = await this.adapter.get<{ dataBytes: number }>(
+							`SELECT SUM(LENGTH(json)) AS dataBytes FROM "${name}"`,
+						);
+						return { name, rowCount, dataBytes: sizeRow?.dataBytes ?? 0 };
+					}
+					return { name, rowCount };
+				}),
+			);
+			// Sort: tables with dataBytes first (largest first), then by rowCount
+			return rows.sort((a, b) => {
+				if (a.dataBytes !== undefined && b.dataBytes !== undefined)
+					return b.dataBytes - a.dataBytes;
+				if (a.dataBytes !== undefined) return -1;
+				if (b.dataBytes !== undefined) return 1;
+				return b.rowCount - a.rowCount;
+			});
+		} catch (err) {
+			console.debug("[getTableRowCounts] query failed:", err);
+			return [];
+		}
+	}
+
+	async getDbSizeBytes(): Promise<number> {
+		if (!this.adapter.isSQLite || !this.resolvedDbPath) {
+			return 0;
+		}
+		try {
+			const { size } = await stat(this.resolvedDbPath);
+			return size;
+		} catch (err) {
+			console.debug("[getDbSizeBytes] stat failed:", err);
+			return 0;
+		}
 	}
 
 	// Agent preference operations delegated to repository
@@ -745,11 +859,100 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		}
 	}
 
-	/** Compact and reclaim disk space (SQLite only) */
-	compact(): void {
-		if (this.sqliteDb) {
-			this.sqliteDb.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-			this.sqliteDb.exec("VACUUM");
+	/** Compact and reclaim disk space (SQLite only).
+	 *
+	 * In WAL mode the sequence is:
+	 *  1. RESTART checkpoint — flushes all WAL frames back into the main file
+	 *     and resets the WAL write position.  Returns (busy, log, checkpointed).
+	 *     If busy > 0 another connection still holds a read lock; we still proceed
+	 *     so that VACUUM compacts what it can, but we log the fact.
+	 *  2. VACUUM — rewrites the main database file to reclaim free pages.
+	 *     In WAL mode this is safe to run while the WAL exists; it issues its own
+	 *     internal checkpoint before rebuilding.
+	 *  3. TRUNCATE checkpoint — resets the WAL file to zero bytes after VACUUM.
+	 *
+	 * @returns diagnostic info about the checkpoint and whether vacuum ran.
+	 */
+	async compact(): Promise<{
+		walBusy: number;
+		walLog: number;
+		walCheckpointed: number;
+		vacuumed: boolean;
+		walTruncateBusy?: number;
+		error?: string;
+	}> {
+		if (!this.sqliteDb || !this.resolvedDbPath) {
+			return { walBusy: 0, walLog: 0, walCheckpointed: 0, vacuumed: false };
+		}
+
+		if (this.compacting) {
+			return {
+				walBusy: 0,
+				walLog: 0,
+				walCheckpointed: 0,
+				vacuumed: false,
+				error: "Compaction already in progress",
+			};
+		}
+
+		// Run the WAL checkpoint + VACUUM + TRUNCATE sequence in a Worker thread
+		// so the main Bun event loop stays free to serve health checks and other
+		// requests during what can be a minutes-long exclusive DB operation.
+		const dbPath = this.resolvedDbPath;
+		let worker: Worker;
+		if (EMBEDDED_VACUUM_WORKER_CODE) {
+			const workerCode = Buffer.from(
+				EMBEDDED_VACUUM_WORKER_CODE,
+				"base64",
+			).toString("utf8");
+			const blob = new Blob([workerCode], { type: "text/javascript" });
+			worker = new Worker(URL.createObjectURL(blob), { smol: true });
+		} else {
+			worker = new Worker(new URL("./vacuum-worker.ts", import.meta.url).href);
+		}
+		this.compacting = true;
+
+		try {
+			const result = await new Promise<{
+				ok: boolean;
+				walBusy?: number;
+				walLog?: number;
+				walCheckpointed?: number;
+				walTruncateBusy?: number;
+				error?: string;
+			}>((resolve, reject) => {
+				worker.onmessage = (event: MessageEvent) => resolve(event.data);
+				worker.onerror = (event: ErrorEvent) =>
+					reject(new Error(event.message));
+				worker.postMessage({
+					dbPath,
+					busyTimeoutMs: this.dbConfig.busyTimeoutMs ?? 10000,
+				});
+			});
+
+			if (!result.ok) {
+				const msg = result.error ?? "Unknown error in vacuum worker";
+				console.error(`[compact] Database compaction failed: ${msg}`);
+				return {
+					walBusy: result.walBusy ?? 0,
+					walLog: result.walLog ?? 0,
+					walCheckpointed: result.walCheckpointed ?? 0,
+					vacuumed: false,
+					walTruncateBusy: result.walTruncateBusy,
+					error: msg,
+				};
+			}
+
+			return {
+				walBusy: result.walBusy ?? 0,
+				walLog: result.walLog ?? 0,
+				walCheckpointed: result.walCheckpointed ?? 0,
+				vacuumed: true,
+				walTruncateBusy: result.walTruncateBusy,
+			};
+		} finally {
+			this.compacting = false;
+			worker.terminate();
 		}
 	}
 
@@ -931,5 +1134,80 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	 */
 	getStatsRepository(): StatsRepository {
 		return this.stats;
+	}
+
+	// ── Combo operations delegated to repository ──────────────────────────────
+
+	async createCombo(name: string, description?: string | null): Promise<Combo> {
+		return this.combo.create(name, description);
+	}
+
+	async listCombos(): Promise<Combo[]> {
+		return this.combo.findAll();
+	}
+
+	async getCombo(id: string): Promise<Combo | null> {
+		return this.combo.findById(id);
+	}
+
+	async updateCombo(
+		id: string,
+		fields: Partial<{
+			name: string;
+			description: string | null;
+			enabled: boolean;
+		}>,
+	): Promise<Combo> {
+		return this.combo.update(id, fields);
+	}
+
+	async deleteCombo(id: string): Promise<void> {
+		await this.combo.delete(id);
+	}
+
+	async addComboSlot(
+		comboId: string,
+		accountId: string,
+		model: string,
+		priority: number,
+	): Promise<ComboSlot> {
+		return this.combo.addSlot(comboId, accountId, model, priority);
+	}
+
+	async updateComboSlot(
+		slotId: string,
+		fields: Partial<{ model: string; priority: number; enabled: boolean }>,
+	): Promise<ComboSlot> {
+		return this.combo.updateSlot(slotId, fields);
+	}
+
+	async removeComboSlot(slotId: string): Promise<void> {
+		await this.combo.removeSlot(slotId);
+	}
+
+	async getComboSlots(comboId: string): Promise<ComboSlot[]> {
+		return this.combo.getSlots(comboId);
+	}
+
+	async reorderComboSlots(comboId: string, slotIds: string[]): Promise<void> {
+		await this.combo.reorderSlots(comboId, slotIds);
+	}
+
+	async setFamilyCombo(
+		family: ComboFamily,
+		comboId: string | null,
+		enabled: boolean,
+	): Promise<void> {
+		await this.combo.setFamilyAssignment(family, comboId, enabled);
+	}
+
+	async getFamilyAssignments(): Promise<ComboFamilyAssignment[]> {
+		return this.combo.getFamilyAssignments();
+	}
+
+	async getActiveComboForFamily(
+		family: ComboFamily,
+	): Promise<ComboWithSlots | null> {
+		return this.combo.getActiveComboForFamily(family);
 	}
 }

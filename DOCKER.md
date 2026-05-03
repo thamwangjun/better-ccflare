@@ -44,6 +44,7 @@ Docker will automatically pull the correct image for your architecture.
 ### Environment Variables
 
 - `BETTER_CCFLARE_DB_PATH` - Database file path (default: `/data/better-ccflare.db`)
+- `XDG_CONFIG_HOME` - Directory for config file storage (default: `/data`, persists settings across restarts)
 - `NODE_ENV` - Environment mode (default: `production`)
 - `LOG_LEVEL` - Logging level (optional)
 - `PORT` - Server port (default: `8080`)
@@ -100,8 +101,8 @@ LOG_LEVEL=INFO
 LOG_FORMAT=pretty
 
 # Database configuration
-DATA_RETENTION_DAYS=7
-REQUEST_RETENTION_DAYS=365
+DATA_RETENTION_DAYS=3
+REQUEST_RETENTION_DAYS=90
 ```
 
 ### Volume Mounts
@@ -121,12 +122,15 @@ volumes:
 
 ## Managing Accounts
 
-### Interactive Mode
+### Web UI (Recommended)
+
+Once the container is running, open **http://localhost:8080** in your browser to manage accounts via the web dashboard. This is the easiest way to add, remove, and configure accounts — including OAuth-based providers like `claude-oauth` that require browser interaction.
+
+### CLI (API key providers only)
+
+For providers that use API keys (e.g., `anthropic-api`, `openai-compatible`) you can manage accounts via the CLI inside the container:
 
 ```bash
-# Add an account
-docker exec -it better-ccflare better-ccflare --add-account myaccount --mode claude-oauth --priority 0
-
 # List accounts
 docker exec -it better-ccflare better-ccflare --list
 
@@ -136,6 +140,8 @@ docker exec -it better-ccflare better-ccflare --remove myaccount
 # Set priority
 docker exec -it better-ccflare better-ccflare --set-priority myaccount 5
 ```
+
+> **Note:** Do not use `docker exec` to add `claude-oauth` accounts. The OAuth flow requires a browser, which is not available inside the container. Use the Web UI at http://localhost:8080 instead.
 
 ### Using Volume Mount
 
@@ -293,7 +299,7 @@ For production deployments with Kubernetes, see the example manifests in the `/k
 
 ## Next Steps
 
-- Configure your accounts using `docker exec -it better-ccflare better-ccflare --add-account <name> --mode <mode> --priority <number>`
+- Configure your accounts via the web dashboard at **http://localhost:8080**
 - Access the web dashboard at `http://localhost:8080`
 - Monitor logs with `docker-compose logs -f`
 - Set up automated backups of the `/data` volume

@@ -9,7 +9,10 @@ import {
 	AccountList,
 	AccountModelMappingsDialog,
 	AccountPriorityDialog,
+	AnthropicReauthDialog,
+	CodexReauthDialog,
 	DeleteConfirmationDialog,
+	QwenReauthDialog,
 	RenameAccountDialog,
 } from "./accounts";
 import { Button } from "./ui/button";
@@ -69,6 +72,27 @@ export function AccountsTab() {
 		isOpen: false,
 		account: null,
 	});
+	const [qwenReauthDialog, setQwenReauthDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [anthropicReauthDialog, setAnthropicReauthDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	const [codexReauthDialog, setCodexReauthDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
 	const [actionError, setActionError] = useState<string | null>(null);
 
 	const handleAddAccount = async (params: {
@@ -86,7 +110,8 @@ export function AccountsTab() {
 			| "kilo"
 			| "openrouter"
 			| "alibaba-coding-plan"
-			| "codex";
+			| "codex"
+			| "qwen";
 		priority: number;
 		customEndpoint?: string;
 	}) => {
@@ -357,6 +382,16 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleRefreshUsage = async (account: Account) => {
+		try {
+			await api.refreshUsage(account.id);
+			await loadAccounts();
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handlePriorityChange = (account: Account) => {
 		setPriorityDialog({ isOpen: true, account });
 	};
@@ -395,12 +430,48 @@ export function AccountsTab() {
 		}
 	};
 
+	const handleBillingTypeToggle = async (account: Account) => {
+		try {
+			await api.updateAccountBillingType(
+				account.id,
+				account.billingType === "plan" ? "api" : "plan",
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
+	const handleAutoPauseOnOverageToggle = async (account: Account) => {
+		try {
+			await api.updateAccountAutoPauseOnOverage(
+				account.id,
+				!account.autoPauseOnOverageEnabled,
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+		}
+	};
+
 	const handleCustomEndpointChange = (account: Account) => {
 		setCustomEndpointDialog({ isOpen: true, account });
 	};
 
 	const handleModelMappingsChange = (account: Account) => {
 		setModelMappingsDialog({ isOpen: true, account });
+	};
+
+	const handleReauth = (account: Account) => {
+		setQwenReauthDialog({ isOpen: true, account });
+	};
+
+	const handleAnthropicReauth = (account: Account) => {
+		setAnthropicReauthDialog({ isOpen: true, account });
+	};
+
+	const handleCodexReauth = (account: Account) => {
+		setCodexReauthDialog({ isOpen: true, account });
 	};
 
 	const handleUpdateCustomEndpoint = async (
@@ -418,7 +489,7 @@ export function AccountsTab() {
 
 	const handleUpdateModelMappings = async (
 		accountId: string,
-		modelMappings: { [key: string]: string },
+		modelMappings: { [key: string]: string | string[] },
 	) => {
 		try {
 			await api.updateAccountModelMappings(accountId, modelMappings);
@@ -429,16 +500,15 @@ export function AccountsTab() {
 		}
 	};
 
-	const handleUpdateModelFallbacks = async (
-		accountId: string,
-		modelFallbacks: { [key: string]: string },
-	) => {
+	const handlePeakHoursPauseToggle = async (account: Account) => {
 		try {
-			await api.updateAccountModelFallbacks(accountId, modelFallbacks);
+			await api.updateAccountPeakHoursPause(
+				account.id,
+				!account.peakHoursPauseEnabled,
+			);
 			await loadAccounts();
 		} catch (err) {
 			setActionError(formatError(err));
-			throw err;
 		}
 	};
 
@@ -514,13 +584,20 @@ export function AccountsTab() {
 						accounts={accounts}
 						onPauseToggle={handlePauseToggle}
 						onForceResetRateLimit={handleForceResetRateLimit}
+						onRefreshUsage={handleRefreshUsage}
 						onRemove={handleRemoveAccount}
 						onRename={handleRename}
 						onPriorityChange={handlePriorityChange}
 						onAutoFallbackToggle={handleAutoFallbackToggle}
 						onAutoRefreshToggle={handleAutoRefreshToggle}
+						onBillingTypeToggle={handleBillingTypeToggle}
+						onAutoPauseOnOverageToggle={handleAutoPauseOnOverageToggle}
+						onPeakHoursPauseToggle={handlePeakHoursPauseToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
+						onReauth={handleReauth}
+						onAnthropicReauth={handleAnthropicReauth}
+						onCodexReauth={handleCodexReauth}
 					/>
 				</CardContent>
 			</Card>
@@ -595,9 +672,37 @@ export function AccountsTab() {
 						})
 					}
 					onUpdateModelMappings={handleUpdateModelMappings}
-					onUpdateModelFallbacks={handleUpdateModelFallbacks}
 				/>
 			)}
+			<QwenReauthDialog
+				isOpen={qwenReauthDialog.isOpen}
+				account={qwenReauthDialog.account}
+				onClose={() => setQwenReauthDialog({ isOpen: false, account: null })}
+				onSuccess={() => {
+					loadAccounts();
+					setQwenReauthDialog({ isOpen: false, account: null });
+				}}
+			/>
+			<AnthropicReauthDialog
+				isOpen={anthropicReauthDialog.isOpen}
+				account={anthropicReauthDialog.account}
+				onClose={() =>
+					setAnthropicReauthDialog({ isOpen: false, account: null })
+				}
+				onSuccess={() => {
+					loadAccounts();
+					setAnthropicReauthDialog({ isOpen: false, account: null });
+				}}
+			/>
+			<CodexReauthDialog
+				isOpen={codexReauthDialog.isOpen}
+				account={codexReauthDialog.account}
+				onClose={() => setCodexReauthDialog({ isOpen: false, account: null })}
+				onSuccess={() => {
+					loadAccounts();
+					setCodexReauthDialog({ isOpen: false, account: null });
+				}}
+			/>
 		</div>
 	);
 }

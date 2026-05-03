@@ -3,13 +3,17 @@ import { Unauthorized } from "@better-ccflare/errors";
 import {
 	createAccountAddHandler,
 	createAccountAutoFallbackHandler,
+	createAccountAutoPauseOnOverageHandler,
 	createAccountAutoRefreshHandler,
+	createAccountBillingTypeHandler,
 	createAccountCustomEndpointUpdateHandler,
 	createAccountForceResetRateLimitHandler,
 	createAccountModelFallbacksUpdateHandler,
 	createAccountModelMappingsUpdateHandler,
 	createAccountPauseHandler,
+	createAccountPeakHoursPauseHandler,
 	createAccountPriorityUpdateHandler,
+	createAccountRefreshUsageHandler,
 	createAccountReloadHandler,
 	createAccountRemoveHandler,
 	createAccountRenameHandler,
@@ -44,12 +48,26 @@ import {
 	createApiKeysStatsHandler,
 	createApiKeyUpdateRoleHandler,
 } from "./handlers/api-keys";
+import {
+	createComboCreateHandler,
+	createComboDeleteHandler,
+	createComboGetHandler,
+	createCombosListHandler,
+	createComboUpdateHandler,
+	createFamiliesListHandler,
+	createFamilyAssignHandler,
+	createSlotAddHandler,
+	createSlotRemoveHandler,
+	createSlotReorderHandler,
+	createSlotUpdateHandler,
+} from "./handlers/combos";
 import { createConfigHandlers } from "./handlers/config";
 import {
 	createHeapSnapshotHandler,
 	createHeapStatsHandler,
 	createRssHandler,
 } from "./handlers/debug";
+import { createFeaturesHandler } from "./handlers/features";
 import { createHealthHandler } from "./handlers/health";
 import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
@@ -58,8 +76,16 @@ import {
 	createCompactHandler,
 } from "./handlers/maintenance";
 import {
+	createAnthropicReauthCallbackHandler,
+	createAnthropicReauthInitHandler,
+	createCodexDeviceFlowInitHandler,
+	createCodexDeviceFlowStatusHandler,
+	createCodexReauthHandler,
 	createOAuthCallbackHandler,
 	createOAuthInitHandler,
+	createQwenDeviceFlowInitHandler,
+	createQwenDeviceFlowStatusHandler,
+	createQwenReauthHandler,
 } from "./handlers/oauth";
 import {
 	createRequestPayloadHandler,
@@ -89,19 +115,29 @@ export class APIRouter {
 		(req: Request, url: URL) => Response | Promise<Response>
 	>;
 	private authService: AuthService;
+	private qwenStatusHandler: (sessionId: string) => Response;
+	private codexStatusHandler: (sessionId: string) => Response;
 
 	constructor(context: APIContext) {
 		this.context = context;
 		this.handlers = new Map();
 		this.authService = new AuthService(context.dbOps);
+		this.qwenStatusHandler = createQwenDeviceFlowStatusHandler();
+		this.codexStatusHandler = createCodexDeviceFlowStatusHandler();
 		this.registerHandlers();
 	}
 
 	private registerHandlers(): void {
-		const { db, config, dbOps } = this.context;
+		const { db, config, dbOps, getAsyncWriterHealth, getUsageWorkerHealth } =
+			this.context;
 
 		// Create handlers
-		const healthHandler = createHealthHandler(dbOps.getAdapter(), config);
+		const healthHandler = createHealthHandler(
+			dbOps.getAdapter(),
+			config,
+			getAsyncWriterHealth,
+			getUsageWorkerHealth,
+		);
 		const statsHandler = createStatsHandler(dbOps);
 		const statsResetHandler = createStatsResetHandler(dbOps);
 		const accountsHandler = createAccountsListHandler(dbOps);
@@ -131,6 +167,18 @@ export class APIRouter {
 		const analyticsHandler = createAnalyticsHandler(this.context);
 		const oauthInitHandler = createOAuthInitHandler(dbOps);
 		const oauthCallbackHandler = createOAuthCallbackHandler(dbOps);
+		const qwenDeviceFlowInitHandler = createQwenDeviceFlowInitHandler(dbOps);
+		const qwenReauthHandler = createQwenReauthHandler(dbOps);
+		const codexDeviceFlowInitHandler = createCodexDeviceFlowInitHandler(dbOps);
+		const codexReauthHandler = createCodexReauthHandler(dbOps);
+		const anthropicReauthInitHandler = createAnthropicReauthInitHandler(
+			dbOps,
+			config,
+		);
+		const anthropicReauthCallbackHandler = createAnthropicReauthCallbackHandler(
+			dbOps,
+			config,
+		);
 		const agentsHandler = createAgentsListHandler(dbOps);
 		const workspacesHandler = createWorkspacesListHandler();
 		const requestsStreamHandler = createRequestsStreamHandler();
@@ -138,6 +186,7 @@ export class APIRouter {
 		const compactHandler = createCompactHandler(dbOps);
 		const systemInfoHandler = createSystemInfoHandler();
 		const versionCheckHandler = createVersionCheckHandler();
+		const featuresHandler = createFeaturesHandler();
 
 		// Debug/profiling handlers
 		const heapStatsHandler = createHeapStatsHandler();
@@ -201,6 +250,24 @@ export class APIRouter {
 		this.handlers.set("POST:/api/oauth/callback", (req) =>
 			oauthCallbackHandler(req),
 		);
+		this.handlers.set("POST:/api/oauth/qwen/init", (req) =>
+			qwenDeviceFlowInitHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/qwen/reauth", (req) =>
+			qwenReauthHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/anthropic/reauth/init", (req) =>
+			anthropicReauthInitHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/anthropic/reauth/callback", (req) =>
+			anthropicReauthCallbackHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/codex/init", (req) =>
+			codexDeviceFlowInitHandler(req),
+		);
+		this.handlers.set("POST:/api/oauth/codex/reauth", (req) =>
+			codexReauthHandler(req),
+		);
 		this.handlers.set("GET:/api/requests", (_req, url) => {
 			const limitParam = url.searchParams.get("limit");
 			const limit =
@@ -246,10 +313,23 @@ export class APIRouter {
 		this.handlers.set("POST:/api/config/retention", (req) =>
 			configHandlers.setRetention(req),
 		);
+		this.handlers.set("GET:/api/config/keepalive", () =>
+			configHandlers.getCacheKeepaliveTtl(),
+		);
+		this.handlers.set("POST:/api/config/keepalive", (req) =>
+			configHandlers.setCacheKeepaliveTtl(req),
+		);
+		this.handlers.set("GET:/api/config/cache-ttl", () =>
+			configHandlers.getCacheTtl(),
+		);
+		this.handlers.set("POST:/api/config/cache-ttl", (req) =>
+			configHandlers.setCacheTtl(req),
+		);
 		this.handlers.set("POST:/api/maintenance/cleanup", () => cleanupHandler());
 		this.handlers.set("POST:/api/maintenance/compact", () => compactHandler());
 		this.handlers.set("GET:/api/system/info", () => systemInfoHandler());
 		this.handlers.set("GET:/api/version/check", () => versionCheckHandler());
+		this.handlers.set("GET:/api/features", () => featuresHandler());
 		this.handlers.set("GET:/api/logs/stream", (req) => logsStreamHandler(req));
 		this.handlers.set("GET:/api/logs/history", () => logsHistoryHandler());
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
@@ -275,6 +355,19 @@ export class APIRouter {
 			apiKeysGenerateHandler(req),
 		);
 		this.handlers.set("GET:/api/api-keys/stats", () => apiKeysStatsHandler());
+
+		// Combo routes
+		this.handlers.set("GET:/api/combos", () =>
+			createCombosListHandler(dbOps)(),
+		);
+		this.handlers.set("POST:/api/combos", (req) =>
+			createComboCreateHandler(dbOps)(req),
+		);
+
+		// Family assignment routes
+		this.handlers.set("GET:/api/families", () =>
+			createFamiliesListHandler(dbOps)(),
+		);
 	}
 
 	/**
@@ -377,6 +470,16 @@ export class APIRouter {
 				);
 			}
 
+			// Account refresh usage - force restart usage polling and token refresh
+			if (path.endsWith("/refresh-usage") && method === "POST") {
+				const refreshUsageHandler = createAccountRefreshUsageHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					refreshUsageHandler(req, accountId),
+				)(req, url);
+			}
+
 			// Account force-reset rate limit
 			if (path.endsWith("/force-reset-rate-limit") && method === "POST") {
 				const forceResetRateLimitHandler =
@@ -412,6 +515,35 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					autoFallbackHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account auto-pause-on-overage toggle
+			if (path.endsWith("/auto-pause-on-overage") && method === "POST") {
+				const autoPauseOnOverageHandler =
+					createAccountAutoPauseOnOverageHandler(this.context.dbOps);
+				return await this.wrapHandler((req) =>
+					autoPauseOnOverageHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account peak hours auto-pause toggle
+			if (path.endsWith("/peak-hours-pause") && method === "POST") {
+				const peakHoursPauseHandler = createAccountPeakHoursPauseHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					peakHoursPauseHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account billing type
+			if (path.endsWith("/billing-type") && method === "POST") {
+				const billingTypeHandler = createAccountBillingTypeHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					billingTypeHandler(req, accountId),
 				)(req, url);
 			}
 
@@ -535,6 +667,96 @@ export class APIRouter {
 			if (parts.length === 4 && method === "DELETE") {
 				const deleteHandler = createApiKeyDeleteHandler(this.context.dbOps);
 				return await this.wrapHandler((req) => deleteHandler(req, keyIdOrName))(
+					req,
+					url,
+				);
+			}
+		}
+
+		// Check for dynamic combo endpoints
+		if (path.startsWith("/api/combos/")) {
+			const parts = path.split("/");
+			const comboId = decodeURIComponent(parts[3]);
+
+			// Combo slot sub-resource routes
+			if (parts[4] === "slots" && parts[5] === "reorder" && method === "PUT") {
+				const handler = createSlotReorderHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, comboId))(req, url);
+			}
+
+			if (parts[4] === "slots" && parts.length === 5 && method === "POST") {
+				const handler = createSlotAddHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, comboId))(req, url);
+			}
+
+			if (parts[4] === "slots" && parts.length === 6) {
+				const slotId = decodeURIComponent(parts[5]);
+
+				if (method === "PUT") {
+					const handler = createSlotUpdateHandler(this.context.dbOps);
+					return await this.wrapHandler((req) => handler(req, comboId, slotId))(
+						req,
+						url,
+					);
+				}
+
+				if (method === "DELETE") {
+					const handler = createSlotRemoveHandler(this.context.dbOps);
+					return await this.wrapHandler(() => handler(comboId, slotId))(
+						req,
+						url,
+					);
+				}
+			}
+
+			// GET /api/combos/:id
+			if (parts.length === 4 && method === "GET") {
+				const handler = createComboGetHandler(this.context.dbOps);
+				return await this.wrapHandler(() => handler(comboId))(req, url);
+			}
+
+			// PUT /api/combos/:id
+			if (parts.length === 4 && method === "PUT") {
+				const handler = createComboUpdateHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, comboId))(req, url);
+			}
+
+			// DELETE /api/combos/:id
+			if (parts.length === 4 && method === "DELETE") {
+				const handler = createComboDeleteHandler(this.context.dbOps);
+				return await this.wrapHandler(() => handler(comboId))(req, url);
+			}
+		}
+
+		// Check for dynamic family endpoints
+		if (path.startsWith("/api/families/") && method === "PUT") {
+			const parts = path.split("/");
+			const family = decodeURIComponent(parts[3]);
+
+			if (parts.length === 4) {
+				const handler = createFamilyAssignHandler(this.context.dbOps);
+				return await this.wrapHandler((req) => handler(req, family))(req, url);
+			}
+		}
+
+		// Check for Qwen device flow status endpoint
+		if (path.startsWith("/api/oauth/qwen/status/") && method === "GET") {
+			const parts = path.split("/");
+			const sessionId = parts[5];
+			if (sessionId) {
+				return await this.wrapHandler(() => this.qwenStatusHandler(sessionId))(
+					req,
+					url,
+				);
+			}
+		}
+
+		// Check for Codex device flow status endpoint
+		if (path.startsWith("/api/oauth/codex/status/") && method === "GET") {
+			const parts = path.split("/");
+			const sessionId = parts[5];
+			if (sessionId) {
+				return await this.wrapHandler(() => this.codexStatusHandler(sessionId))(
 					req,
 					url,
 				);

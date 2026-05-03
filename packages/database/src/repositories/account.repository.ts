@@ -17,8 +17,14 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(priority, 0) as priority,
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
+				COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 				custom_endpoint,
-				model_mappings
+				model_mappings,
+				cross_region_mode,
+				model_fallbacks,
+				billing_type,
+				pause_reason,
+				refresh_token_issued_at
 			FROM accounts
 			ORDER BY priority DESC
 		`);
@@ -37,8 +43,14 @@ export class AccountRepository extends BaseRepository<Account> {
 				COALESCE(priority, 0) as priority,
 				COALESCE(auto_fallback_enabled, 0) as auto_fallback_enabled,
 				COALESCE(auto_refresh_enabled, 0) as auto_refresh_enabled,
+				COALESCE(auto_pause_on_overage_enabled, 0) as auto_pause_on_overage_enabled,
 				custom_endpoint,
-				model_mappings
+				model_mappings,
+				cross_region_mode,
+				model_fallbacks,
+				billing_type,
+				pause_reason,
+				refresh_token_issued_at
 			FROM accounts
 			WHERE id = ?
 		`,
@@ -54,10 +66,11 @@ export class AccountRepository extends BaseRepository<Account> {
 		expiresAt: number,
 		refreshToken?: string,
 	): Promise<void> {
+		const now = Date.now();
 		if (refreshToken) {
 			await this.run(
-				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ? WHERE id = ?`,
-				[accessToken, expiresAt, refreshToken, accountId],
+				`UPDATE accounts SET access_token = ?, expires_at = ?, refresh_token = ?, refresh_token_issued_at = ? WHERE id = ?`,
+				[accessToken, expiresAt, refreshToken, now, accountId],
 			);
 		} else {
 			await this.run(
@@ -125,12 +138,18 @@ export class AccountRepository extends BaseRepository<Account> {
 		);
 	}
 
-	async pause(accountId: string): Promise<void> {
-		await this.run(`UPDATE accounts SET paused = 1 WHERE id = ?`, [accountId]);
+	async pause(accountId: string, reason = "manual"): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET paused = 1, pause_reason = ? WHERE id = ?`,
+			[reason, accountId],
+		);
 	}
 
 	async resume(accountId: string): Promise<void> {
-		await this.run(`UPDATE accounts SET paused = 0 WHERE id = ?`, [accountId]);
+		await this.run(
+			`UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ?`,
+			[accountId],
+		);
 	}
 
 	async resetSession(accountId: string, timestamp: number): Promise<void> {
@@ -169,6 +188,26 @@ export class AccountRepository extends BaseRepository<Account> {
 			`UPDATE accounts SET auto_fallback_enabled = ? WHERE id = ?`,
 			[enabled ? 1 : 0, accountId],
 		);
+	}
+
+	async setAutoPauseOnOverageEnabled(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET auto_pause_on_overage_enabled = ? WHERE id = ?`,
+			[enabled ? 1 : 0, accountId],
+		);
+	}
+
+	async setBillingType(
+		accountId: string,
+		billingType: string | null,
+	): Promise<void> {
+		await this.run(`UPDATE accounts SET billing_type = ? WHERE id = ?`, [
+			billingType,
+			accountId,
+		]);
 	}
 
 	/**

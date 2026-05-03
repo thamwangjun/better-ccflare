@@ -102,10 +102,15 @@ export interface AccountRow {
 	priority?: number;
 	auto_fallback_enabled?: boolean | number | null;
 	auto_refresh_enabled?: boolean | number | null;
+	auto_pause_on_overage_enabled?: boolean | number | null;
+	peak_hours_pause_enabled?: boolean | number | null;
 	custom_endpoint?: string | null;
 	model_mappings?: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode?: string | null; // Bedrock cross-region inference mode
 	model_fallbacks?: string | null; // JSON string for model family fallback mappings
+	billing_type?: string | null; // Per-account billing override
+	pause_reason?: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
+	refresh_token_issued_at?: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
 }
 
 // Domain model - used throughout the application
@@ -131,10 +136,26 @@ export interface Account {
 	priority: number;
 	auto_fallback_enabled: boolean;
 	auto_refresh_enabled: boolean;
+	auto_pause_on_overage_enabled: boolean;
+	peak_hours_pause_enabled: boolean;
 	custom_endpoint: string | null;
 	model_mappings: string | null; // JSON string for OpenAI-compatible providers
 	cross_region_mode: string | null; // Bedrock cross-region inference mode
 	model_fallbacks: string | null; // JSON string for model family fallback mappings
+	billing_type: string | null;
+	pause_reason: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
+	refresh_token_issued_at: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
+}
+
+// Session statistics for 5-hour token window
+export interface SessionStats {
+	requests: number;
+	inputTokens: number;
+	cacheCreationInputTokens: number;
+	cacheReadInputTokens: number;
+	outputTokens: number;
+	planCostUsd: number;
+	apiCostUsd: number;
 }
 
 // API response type - what clients receive
@@ -157,14 +178,19 @@ export interface AccountResponse {
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
+	autoPauseOnOverageEnabled?: boolean;
+	peakHoursPauseEnabled?: boolean;
 	customEndpoint: string | null;
-	modelMappings: { [key: string]: string } | null; // Parsed model mappings for OpenAI-compatible providers
+	modelMappings: { [key: string]: string | string[] } | null; // Parsed model mappings (arrays = cycling models)
 	usageUtilization: number | null; // Percentage utilization (0-100) from API
 	usageWindow: string | null; // Most restrictive window (e.g., "five_hour")
 	usageData: FullUsageData | null; // Full usage data for Anthropic accounts
+	usageRateLimitedUntil: number | null; // Timestamp (ms) until usage API 429 clears; null if not rate-limited
 	hasRefreshToken: boolean; // Indicates if the account has a refresh token (OAuth account)
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 	modelFallbacks?: { [key: string]: string } | null;
+	billingType?: string | null;
+	sessionStats: SessionStats | null;
 }
 
 // UI display type - used in CLI and web dashboard
@@ -215,7 +241,8 @@ export interface AccountListItem {
 		| "kilo"
 		| "openrouter"
 		| "alibaba-coding-plan"
-		| "codex";
+		| "codex"
+		| "qwen";
 	priority: number;
 	autoFallbackEnabled: boolean;
 	autoRefreshEnabled: boolean;
@@ -276,10 +303,15 @@ export function toAccount(row: AccountRow): Account {
 		priority: toNum(row.priority),
 		auto_fallback_enabled: !!row.auto_fallback_enabled,
 		auto_refresh_enabled: !!row.auto_refresh_enabled,
+		auto_pause_on_overage_enabled: !!row.auto_pause_on_overage_enabled,
+		peak_hours_pause_enabled: !!row.peak_hours_pause_enabled,
 		custom_endpoint: row.custom_endpoint || null,
 		model_mappings: row.model_mappings || null,
 		cross_region_mode: row.cross_region_mode || null,
 		model_fallbacks: row.model_fallbacks || null,
+		billing_type: row.billing_type || null,
+		pause_reason: row.pause_reason || null,
+		refresh_token_issued_at: toNumOrNull(row.refresh_token_issued_at),
 	};
 }
 
@@ -296,20 +328,19 @@ export function toAccountResponse(account: Account): AccountResponse {
 		? `Session: ${account.session_request_count} requests`
 		: "No active session";
 
-	// Parse model mappings for OpenAI-compatible providers
+	// Parse model mappings (supported for any provider)
 	let modelMappings: { [key: string]: string } | null = null;
-	if (account.provider === "openai-compatible" && account.model_mappings) {
+	if (account.model_mappings) {
 		try {
 			const parsed = JSON.parse(account.model_mappings);
-			modelMappings = parsed.modelMappings || null;
+			// Stored as flat {"model": "target"} object
+			modelMappings =
+				typeof parsed === "object" && parsed !== null ? parsed : null;
 		} catch {
 			// If parsing fails, ignore model mappings
 			modelMappings = null;
 		}
-	} else if (
-		account.provider === "openai-compatible" &&
-		account.custom_endpoint
-	) {
+	} else if (account.custom_endpoint) {
 		// Also try parsing from custom_endpoint for backwards compatibility
 		try {
 			const parsed = JSON.parse(account.custom_endpoint);
@@ -357,13 +388,17 @@ export function toAccountResponse(account: Account): AccountResponse {
 		priority: account.priority,
 		autoFallbackEnabled: account.auto_fallback_enabled,
 		autoRefreshEnabled: account.auto_refresh_enabled,
+		autoPauseOnOverageEnabled: account.auto_pause_on_overage_enabled,
 		customEndpoint: account.custom_endpoint,
 		modelMappings,
 		usageUtilization: null, // Will be filled in by API handler from cache
 		usageWindow: null, // Will be filled in by API handler from cache
 		usageData: null, // Will be filled in by API handler from cache
+		usageRateLimitedUntil: null, // Will be filled in by API handler from cache
 		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 		modelFallbacks,
+		billingType: account.billing_type,
+		sessionStats: null,
 	};
 }
 

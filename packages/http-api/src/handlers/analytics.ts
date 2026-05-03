@@ -122,6 +122,8 @@ export function createAnalyticsHandler(context: APIContext) {
 				avg_response_time: number;
 				total_tokens: number;
 				total_cost_usd: number;
+				plan_cost_usd: number;
+				api_cost_usd: number;
 				avg_tokens_per_second: number;
 				active_accounts: number;
 				input_tokens: number;
@@ -140,6 +142,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					(SELECT AVG(response_time_ms) FROM filtered_requests) as avg_response_time,
 					(SELECT SUM(COALESCE(total_tokens, 0)) FROM filtered_requests) as total_tokens,
 					(SELECT SUM(COALESCE(cost_usd, 0)) FROM filtered_requests) as total_cost_usd,
+					(SELECT SUM(CASE WHEN billing_type = 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) FROM filtered_requests) as plan_cost_usd,
+					(SELECT SUM(CASE WHEN billing_type != 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) FROM filtered_requests) as api_cost_usd,
 					(SELECT AVG(output_tokens_per_second) FROM filtered_requests) as avg_tokens_per_second,
 					(SELECT COUNT(DISTINCT COALESCE(account_used, ?)) FROM filtered_requests) as active_accounts,
 					(SELECT SUM(COALESCE(input_tokens, 0)) FROM filtered_requests) as input_tokens,
@@ -157,6 +161,8 @@ export function createAnalyticsHandler(context: APIContext) {
 				requests: number;
 				tokens: number;
 				cost_usd: number;
+				plan_cost_usd: number;
+				api_cost_usd: number;
 				success_rate: number;
 				error_rate: number;
 				cache_hit_rate: number;
@@ -170,6 +176,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					COUNT(*) as requests,
 					SUM(COALESCE(total_tokens, 0)) as tokens,
 					SUM(COALESCE(cost_usd, 0)) as cost_usd,
+					SUM(CASE WHEN billing_type = 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as plan_cost_usd,
+					SUM(CASE WHEN billing_type != 'plan' THEN COALESCE(cost_usd, 0) ELSE 0 END) as api_cost_usd,
 					SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 					SUM(CASE WHEN success = FALSE THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as error_rate,
 					SUM(COALESCE(cache_read_input_tokens, 0)) * 100.0 /
@@ -193,9 +201,24 @@ export function createAnalyticsHandler(context: APIContext) {
 				requests: number | null;
 				success_rate: number | null;
 				cost_usd: number | null;
+				plan_cost_usd: number | null;
+				api_cost_usd: number | null;
+				total_cost_usd: number | null;
 				total_tokens: number | null;
 			}>(
 				`
+				-- UNION 11-column contract (ALL 5 sub-selects MUST match in this exact column order):
+				-- 1. data_type TEXT
+				-- 2. name TEXT
+				-- 3. secondary_name TEXT
+				-- 4. count BIGINT
+				-- 5. requests BIGINT
+				-- 6. success_rate DOUBLE PRECISION
+				-- 7. cost_usd DOUBLE PRECISION
+				-- 8. plan_cost_usd DOUBLE PRECISION
+				-- 9. api_cost_usd DOUBLE PRECISION
+				-- 10. total_cost_usd DOUBLE PRECISION
+				-- 11. total_tokens BIGINT
 				SELECT * FROM (
 					SELECT
 						'model_distribution' as data_type,
@@ -205,6 +228,9 @@ export function createAnalyticsHandler(context: APIContext) {
 						CAST(NULL AS BIGINT) as requests,
 						CAST(NULL AS DOUBLE PRECISION) as success_rate,
 						CAST(NULL AS DOUBLE PRECISION) as cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as plan_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as api_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as total_cost_usd,
 						CAST(NULL AS BIGINT) as total_tokens
 					FROM requests r
 					WHERE ${whereClause} AND model IS NOT NULL
@@ -224,6 +250,9 @@ export function createAnalyticsHandler(context: APIContext) {
 						COUNT(r.id) as requests,
 						SUM(CASE WHEN r.success = TRUE THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(r.id), 0) as success_rate,
 						CAST(NULL AS DOUBLE PRECISION) as cost_usd,
+						SUM(CASE WHEN r.billing_type = 'plan' THEN COALESCE(r.cost_usd, 0) ELSE 0 END) as plan_cost_usd,
+						SUM(CASE WHEN r.billing_type != 'plan' THEN COALESCE(r.cost_usd, 0) ELSE 0 END) as api_cost_usd,
+						SUM(COALESCE(r.cost_usd, 0)) as total_cost_usd,
 						CAST(NULL AS BIGINT) as total_tokens
 					FROM requests r
 					LEFT JOIN accounts a ON a.id = r.account_used
@@ -245,6 +274,9 @@ export function createAnalyticsHandler(context: APIContext) {
 						COUNT(*) as requests,
 						CAST(NULL AS DOUBLE PRECISION) as success_rate,
 						SUM(COALESCE(cost_usd, 0)) as cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as plan_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as api_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as total_cost_usd,
 						SUM(COALESCE(total_tokens, 0)) as total_tokens
 					FROM requests r
 					WHERE ${whereClause} AND COALESCE(cost_usd, 0) > 0 AND model IS NOT NULL
@@ -264,6 +296,9 @@ export function createAnalyticsHandler(context: APIContext) {
 						COUNT(*) as requests,
 						SUM(CASE WHEN success = TRUE THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0) as success_rate,
 						CAST(NULL AS DOUBLE PRECISION) as cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as plan_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as api_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as total_cost_usd,
 						CAST(NULL AS BIGINT) as total_tokens
 					FROM requests r
 					WHERE ${whereClause} AND api_key_id IS NOT NULL
@@ -284,6 +319,9 @@ export function createAnalyticsHandler(context: APIContext) {
 						CAST(NULL AS BIGINT) as requests,
 						CAST(NULL AS DOUBLE PRECISION) as success_rate,
 						CAST(NULL AS DOUBLE PRECISION) as cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as plan_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as api_cost_usd,
+						CAST(NULL AS DOUBLE PRECISION) as total_cost_usd,
 						CAST(NULL AS BIGINT) as total_tokens
 					FROM requests r
 					LEFT JOIN accounts a ON a.id = r.account_used
@@ -318,6 +356,9 @@ export function createAnalyticsHandler(context: APIContext) {
 					name: row.name,
 					requests: Number(row.requests) || 0,
 					successRate: Number(row.success_rate) || 0,
+					planCostUsd: Number(row.plan_cost_usd) || 0,
+					apiCostUsd: Number(row.api_cost_usd) || 0,
+					totalCostUsd: Number(row.total_cost_usd) || 0,
 				}));
 
 			const costByModel = additionalData
@@ -432,6 +473,8 @@ export function createAnalyticsHandler(context: APIContext) {
 				requests: Number(point.requests) || 0,
 				tokens: Number(point.tokens) || 0,
 				costUsd: Number(point.cost_usd) || 0,
+				planCostUsd: Number(point.plan_cost_usd) || 0,
+				apiCostUsd: Number(point.api_cost_usd) || 0,
 				successRate: Number(point.success_rate) || 0,
 				errorRate: Number(point.error_rate) || 0,
 				cacheHitRate: Number(point.cache_hit_rate) || 0,
@@ -505,6 +548,8 @@ export function createAnalyticsHandler(context: APIContext) {
 					avgResponseTime: Number(consolidatedResult?.avg_response_time) || 0,
 					totalTokens: Number(consolidatedResult?.total_tokens) || 0,
 					totalCostUsd: Number(consolidatedResult?.total_cost_usd) || 0,
+					planCostUsd: Number(consolidatedResult?.plan_cost_usd) || 0,
+					apiCostUsd: Number(consolidatedResult?.api_cost_usd) || 0,
 					avgTokensPerSecond:
 						consolidatedResult?.avg_tokens_per_second != null
 							? Number(consolidatedResult.avg_tokens_per_second)

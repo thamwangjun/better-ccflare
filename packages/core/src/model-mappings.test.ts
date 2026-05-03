@@ -119,7 +119,7 @@ describe("Model Mapping", () => {
 		expect(futureSonnet).toBe("z-ai/glm-4.5-air:free"); // still matches "sonnet"
 	});
 
-	test("mapModelName handles missing model_mappings gracefully", () => {
+	test("mapModelName passes through original model when no mappings configured", () => {
 		const mockAccount: Account = {
 			id: "test",
 			name: "test-account",
@@ -136,14 +136,14 @@ describe("Model Mapping", () => {
 			custom_endpoint: null,
 		};
 
-		// Should use default fallback mappings
+		// Should return the original model name unchanged
 		const result1 = mapModelName("claude-sonnet-4-5-20250929", mockAccount);
 		const result2 = mapModelName("claude-haiku-4-5-20251001", mockAccount);
 		const result3 = mapModelName("claude-opus-4-1-20250805", mockAccount);
 
-		expect(result1).toBe("openai/gpt-5"); // Default sonnet fallback
-		expect(result2).toBe("openai/gpt-5-mini"); // Default haiku fallback
-		expect(result3).toBe("openai/gpt-5"); // Default opus fallback
+		expect(result1).toBe("claude-sonnet-4-5-20250929");
+		expect(result2).toBe("claude-haiku-4-5-20251001");
+		expect(result3).toBe("claude-opus-4-1-20250805");
 	});
 
 	test("mapModelName handles case insensitive pattern matching correctly", () => {
@@ -179,6 +179,43 @@ describe("Model Mapping", () => {
 		expect(sonnetResult).toBe("lowercase-gpt-4");
 		expect(haikuResult).toBe("lowercase-gpt-3.5");
 		expect(opusResult).toBe("lowercase-gpt-4-turbo");
+	});
+
+	test("mapModelName passes through unmapped model when only sonnet is configured (regression: no implicit sonnet catch-all)", () => {
+		// Regression test: previously, if an account had a sonnet mapping but no haiku mapping,
+		// requesting a haiku model would silently remap it to the sonnet target.
+		const mockAccount: Account = {
+			id: "test",
+			name: "test-account",
+			provider: "openai-compatible",
+			api_key: "test-key",
+			refresh_token: "",
+			access_token: "",
+			expires_at: null,
+			created_at: Date.now(),
+			request_count: 0,
+			total_requests: 0,
+			priority: 10,
+			model_mappings: JSON.stringify({
+				sonnet: "claude-sonnet-4-6", // Only sonnet is mapped; haiku is NOT
+			}),
+			custom_endpoint: null,
+		};
+
+		// Sonnet should be mapped
+		expect(mapModelName("claude-sonnet-4-5", mockAccount)).toBe(
+			"claude-sonnet-4-6",
+		);
+
+		// Haiku has no mapping — must pass through unchanged, NOT remap to sonnet target
+		expect(mapModelName("claude-haiku-4-5", mockAccount)).toBe(
+			"claude-haiku-4-5",
+		);
+
+		// Opus has no mapping — must also pass through unchanged
+		expect(mapModelName("claude-opus-4-5", mockAccount)).toBe(
+			"claude-opus-4-5",
+		);
 	});
 });
 

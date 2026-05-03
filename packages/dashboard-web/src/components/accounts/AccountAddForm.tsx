@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -27,7 +27,8 @@ interface AccountAddFormProps {
 			| "kilo"
 			| "openrouter"
 			| "alibaba-coding-plan"
-			| "codex";
+			| "codex"
+			| "qwen";
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -140,7 +141,8 @@ export function AccountAddForm({
 			| "kilo"
 			| "openrouter"
 			| "alibaba-coding-plan"
-			| "codex",
+			| "codex"
+			| "qwen",
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -155,10 +157,52 @@ export function AccountAddForm({
 		haikuModel: "",
 	});
 
+	// Qwen device flow state
+	const [qwenStep, setQwenStep] = useState<
+		"idle" | "pending" | "complete" | "error"
+	>("idle");
+	const [qwenAuthUrl, setQwenAuthUrl] = useState("");
+	const [qwenUserCode, setQwenUserCode] = useState("");
+	const [qwenError, setQwenError] = useState("");
+	const qwenSessionIdRef = useRef<string>("");
+	const qwenPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
+
+	// Codex device flow state
+	const [codexStep, setCodexStep] = useState<
+		"idle" | "pending" | "complete" | "error"
+	>("idle");
+	const [codexVerificationUrl, setCodexVerificationUrl] = useState("");
+	const [codexUserCode, setCodexUserCode] = useState("");
+	const [codexError, setCodexError] = useState("");
+	const codexSessionIdRef = useRef<string>("");
+	const codexPollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(
+		null,
+	);
+
 	const [awsProfiles, setAwsProfiles] = useState<
 		Array<{ name: string; region: string | null }>
 	>([]);
 	const [loadingProfiles, setLoadingProfiles] = useState(false);
+
+	// Cleanup Qwen polling on unmount
+	useEffect(() => {
+		return () => {
+			if (qwenPollIntervalRef.current !== null) {
+				clearInterval(qwenPollIntervalRef.current);
+			}
+		};
+	}, []);
+
+	// Cleanup Codex polling on unmount
+	useEffect(() => {
+		return () => {
+			if (codexPollIntervalRef.current !== null) {
+				clearInterval(codexPollIntervalRef.current);
+			}
+		};
+	}, []);
 
 	// Load AWS profiles when bedrock mode is selected
 	useEffect(() => {
@@ -189,14 +233,157 @@ export function AccountAddForm({
 		}
 	};
 
-	const handleAddAccount = async () => {
-		if (newAccount.mode === "codex") {
-			onError(
-				"Codex accounts must be added via the CLI: bun run cli --add-account <name> --mode codex",
-			);
+	const stopQwenPolling = () => {
+		if (qwenPollIntervalRef.current !== null) {
+			clearInterval(qwenPollIntervalRef.current);
+			qwenPollIntervalRef.current = null;
+		}
+	};
+
+	const stopCodexPolling = () => {
+		if (codexPollIntervalRef.current !== null) {
+			clearInterval(codexPollIntervalRef.current);
+			codexPollIntervalRef.current = null;
+		}
+	};
+
+	const handleStartQwenAuth = async () => {
+		if (!newAccount.name) {
+			onError("Account name is required");
 			return;
 		}
+		setQwenStep("pending");
+		setQwenError("");
+		try {
+			const result = await api.initQwenDeviceFlow({
+				name: newAccount.name,
+				priority: newAccount.priority,
+			});
+			qwenSessionIdRef.current = result.sessionId;
+			setQwenAuthUrl(result.authUrl);
+			setQwenUserCode(result.userCode);
 
+			// Open auth URL in new tab
+			if (typeof window !== "undefined") {
+				window.open(result.authUrl, "_blank");
+			}
+
+			// Poll for status every 3s
+			qwenPollIntervalRef.current = setInterval(async () => {
+				try {
+					const status = await api.getQwenAuthStatus(qwenSessionIdRef.current);
+					if (status.status === "complete") {
+						stopQwenPolling();
+						setQwenStep("complete");
+						setTimeout(() => {
+							setQwenStep("idle");
+							setQwenAuthUrl("");
+							setQwenUserCode("");
+							setNewAccount({
+								name: "",
+								mode: "claude-oauth",
+								priority: 0,
+								apiKey: "",
+								customEndpoint: "",
+								projectId: "",
+								region: "global",
+								profile: "",
+								awsRegion: "",
+								crossRegionMode: "geographic",
+								customBedrockModel: "",
+								opusModel: "",
+								sonnetModel: "",
+								haikuModel: "",
+							});
+							onSuccess();
+						}, 1500);
+					} else if (status.status === "error") {
+						stopQwenPolling();
+						setQwenStep("error");
+						setQwenError(status.error || "Authentication failed");
+					}
+				} catch {
+					// Network error — keep polling
+				}
+			}, 3000);
+		} catch (err) {
+			setQwenStep("error");
+			setQwenError(
+				err instanceof Error ? err.message : "Failed to start authentication",
+			);
+		}
+	};
+
+	const handleStartCodexAuth = async () => {
+		if (!newAccount.name) {
+			onError("Account name is required");
+			return;
+		}
+		setCodexStep("pending");
+		setCodexError("");
+		try {
+			const result = await api.initCodexDeviceFlow({
+				name: newAccount.name,
+				priority: newAccount.priority,
+			});
+			codexSessionIdRef.current = result.sessionId;
+			setCodexVerificationUrl(result.verificationUrl);
+			setCodexUserCode(result.userCode);
+
+			// Open auth URL in new tab
+			if (typeof window !== "undefined") {
+				window.open(result.verificationUrl, "_blank");
+			}
+
+			// Poll for status every 3s
+			codexPollIntervalRef.current = setInterval(async () => {
+				try {
+					const status = await api.getCodexAuthStatus(
+						codexSessionIdRef.current,
+					);
+					if (status.status === "complete") {
+						stopCodexPolling();
+						setCodexStep("complete");
+						setTimeout(() => {
+							setCodexStep("idle");
+							setCodexVerificationUrl("");
+							setCodexUserCode("");
+							setNewAccount({
+								name: "",
+								mode: "claude-oauth",
+								priority: 0,
+								apiKey: "",
+								customEndpoint: "",
+								projectId: "",
+								region: "global",
+								profile: "",
+								awsRegion: "",
+								crossRegionMode: "geographic",
+								customBedrockModel: "",
+								opusModel: "",
+								sonnetModel: "",
+								haikuModel: "",
+							});
+							onSuccess();
+						}, 1500);
+					} else if (status.status === "error") {
+						stopCodexPolling();
+						setCodexStep("error");
+						setCodexError(status.error || "Authentication failed");
+					}
+				} catch {
+					// Network error — keep polling
+				}
+			}, 3000);
+		} catch (err) {
+			setCodexStep("error");
+			setCodexError(
+				err instanceof Error ? err.message : "Failed to start authentication",
+			);
+		}
+	};
+
+	const handleAddAccount = async () => {
 		if (!newAccount.name) {
 			onError("Account name is required");
 			return;
@@ -676,6 +863,16 @@ export function AccountAddForm({
 	};
 
 	const handleCancel = () => {
+		stopQwenPolling();
+		setQwenStep("idle");
+		setQwenAuthUrl("");
+		setQwenUserCode("");
+		setQwenError("");
+		stopCodexPolling();
+		setCodexStep("idle");
+		setCodexVerificationUrl("");
+		setCodexUserCode("");
+		setCodexError("");
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
@@ -734,7 +931,8 @@ export function AccountAddForm({
 									| "bedrock"
 									| "kilo"
 									| "openrouter"
-									| "codex",
+									| "codex"
+									| "qwen",
 							) => setNewAccount({ ...newAccount, mode: value })}
 						>
 							<SelectTrigger id="mode">
@@ -746,6 +944,7 @@ export function AccountAddForm({
 								</SelectItem>
 								<SelectItem value="console">Claude API</SelectItem>
 								<SelectItem value="codex">Codex (OpenAI OAuth)</SelectItem>
+								<SelectItem value="qwen">Qwen (Alibaba Cloud OAuth)</SelectItem>
 								<SelectItem value="vertex-ai">
 									Vertex AI (Google Cloud)
 								</SelectItem>
@@ -768,17 +967,133 @@ export function AccountAddForm({
 						</Select>
 					</div>
 					{newAccount.mode === "codex" && (
-						<div className="bg-amber-50 dark:bg-amber-950 p-3 rounded-lg">
-							<p className="text-sm text-amber-900 dark:text-amber-100 font-medium mb-1">
-								CLI Required
-							</p>
-							<p className="text-xs text-amber-800 dark:text-amber-200 mb-2">
-								Codex uses OpenAI OAuth with a local callback server on port
-								1455. This must be done from the CLI:
-							</p>
-							<code className="text-xs bg-amber-100 dark:bg-amber-900 text-amber-900 dark:text-amber-100 px-2 py-1 rounded block font-mono">
-								bun run cli --add-account &lt;name&gt; --mode codex
-							</code>
+						<div className="space-y-3">
+							{codexStep === "idle" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
+										Device Code Authentication
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Click the button below to start Codex authentication. A
+										browser tab will open for you to authorize.
+									</p>
+								</div>
+							)}
+							{codexStep === "pending" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+										Waiting for authorization...
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Enter this code in the browser tab:
+									</p>
+									<div className="flex items-center gap-2">
+										<code className="text-lg font-mono font-bold tracking-widest bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 px-3 py-1 rounded">
+											{codexUserCode}
+										</code>
+										<a
+											href={codexVerificationUrl}
+											target="_blank"
+											rel="noreferrer"
+											className="text-xs text-blue-700 dark:text-blue-300 underline"
+										>
+											Open browser
+										</a>
+									</div>
+								</div>
+							)}
+							{codexStep === "complete" && (
+								<div className="bg-green-50 dark:bg-green-950 p-3 rounded-lg">
+									<p className="text-sm text-green-900 dark:text-green-100 font-medium">
+										Authorization successful! Account added.
+									</p>
+								</div>
+							)}
+							{codexStep === "error" && (
+								<div className="bg-red-50 dark:bg-red-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-red-900 dark:text-red-100 font-medium">
+										Authentication failed
+									</p>
+									<p className="text-xs text-red-800 dark:text-red-200">
+										{codexError}
+									</p>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => {
+											setCodexStep("idle");
+											setCodexError("");
+										}}
+									>
+										Try again
+									</Button>
+								</div>
+							)}
+						</div>
+					)}
+					{newAccount.mode === "qwen" && (
+						<div className="space-y-3">
+							{qwenStep === "idle" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium mb-1">
+										Device Code Authentication
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Click the button below to start Qwen authentication. A
+										browser tab will open for you to authorize.
+									</p>
+								</div>
+							)}
+							{qwenStep === "pending" && (
+								<div className="bg-blue-50 dark:bg-blue-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-blue-900 dark:text-blue-100 font-medium">
+										Waiting for authorization...
+									</p>
+									<p className="text-xs text-blue-800 dark:text-blue-200">
+										Enter this code in the browser tab:
+									</p>
+									<div className="flex items-center gap-2">
+										<code className="text-lg font-mono font-bold tracking-widest bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 px-3 py-1 rounded">
+											{qwenUserCode}
+										</code>
+										<a
+											href={qwenAuthUrl}
+											target="_blank"
+											rel="noreferrer"
+											className="text-xs text-blue-700 dark:text-blue-300 underline"
+										>
+											Open browser
+										</a>
+									</div>
+								</div>
+							)}
+							{qwenStep === "complete" && (
+								<div className="bg-green-50 dark:bg-green-950 p-3 rounded-lg">
+									<p className="text-sm text-green-900 dark:text-green-100 font-medium">
+										Authorization successful! Account added.
+									</p>
+								</div>
+							)}
+							{qwenStep === "error" && (
+								<div className="bg-red-50 dark:bg-red-950 p-3 rounded-lg space-y-2">
+									<p className="text-sm text-red-900 dark:text-red-100 font-medium">
+										Authentication failed
+									</p>
+									<p className="text-xs text-red-800 dark:text-red-200">
+										{qwenError}
+									</p>
+									<Button
+										variant="outline"
+										size="sm"
+										onClick={() => {
+											setQwenStep("idle");
+											setQwenError("");
+										}}
+									>
+										Try again
+									</Button>
+								</div>
+							)}
 						</div>
 					)}
 					{newAccount.mode === "vertex-ai" && (
@@ -1662,10 +1977,36 @@ export function AccountAddForm({
 			)}
 			{authStep === "form" ? (
 				<div className="flex gap-2">
-					<Button onClick={handleAddAccount}>Continue</Button>
-					<Button variant="outline" onClick={handleCancel}>
-						Cancel
-					</Button>
+					{newAccount.mode === "qwen" ? (
+						<>
+							{(qwenStep === "idle" || qwenStep === "error") && (
+								<Button onClick={handleStartQwenAuth}>
+									Start Qwen Authentication
+								</Button>
+							)}
+							<Button variant="outline" onClick={handleCancel}>
+								Cancel
+							</Button>
+						</>
+					) : newAccount.mode === "codex" ? (
+						<>
+							{(codexStep === "idle" || codexStep === "error") && (
+								<Button onClick={handleStartCodexAuth}>
+									Start Codex Authentication
+								</Button>
+							)}
+							<Button variant="outline" onClick={handleCancel}>
+								Cancel
+							</Button>
+						</>
+					) : (
+						<>
+							<Button onClick={handleAddAccount}>Continue</Button>
+							<Button variant="outline" onClick={handleCancel}>
+								Cancel
+							</Button>
+						</>
+					)}
 				</div>
 			) : (
 				<>

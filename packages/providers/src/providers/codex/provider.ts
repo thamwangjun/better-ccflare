@@ -10,14 +10,14 @@ const log = new Logger("CodexProvider");
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const DEFAULT_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
-const CODEX_VERSION = "0.92.0";
+const CODEX_VERSION = "0.125.0";
 const CODEX_USER_AGENT = `codex-cli/${CODEX_VERSION} (Windows 10.0.26100; x64)`;
 
 // Default model mapping: Anthropic model name prefixes → Codex model names
 const DEFAULT_MODEL_MAP: Record<string, string> = {
 	opus: "gpt-5.3-codex",
 	sonnet: "gpt-5.3-codex",
-	haiku: "gpt-5.1-codex-mini",
+	haiku: "gpt-5.4-mini",
 };
 
 // ── Codex Responses API types ─────────────────────────────────────────────────
@@ -196,9 +196,10 @@ export class CodexProvider extends BaseProvider {
 			expires_in: number;
 		};
 
-		log.info(
-			`Codex token refresh successful for ${account.name}, new refresh token received`,
-		);
+		log.debug(`[CodexProvider] token refresh response for ${account.name}:`, {
+			expiresIn: json.expires_in,
+			responseKeys: Object.keys(json),
+		});
 
 		return {
 			accessToken: json.access_token,
@@ -302,28 +303,30 @@ export class CodexProvider extends BaseProvider {
 	}
 
 	parseRateLimit(response: Response): RateLimitInfo {
-		if (response.status !== 429) {
-			return { isRateLimited: false };
-		}
-
-		// Codex rate limit reset headers
-		const reset5h = response.headers.get("x-codex-5h-reset-at");
-		const reset7d = response.headers.get("x-codex-7d-reset-at");
-
-		// Use the sooner of the two reset times
-		let resetTime: number | undefined;
-		const parse = (v: string | null) =>
+		// Parse reset time from Codex usage headers (present on all responses)
+		const parseReset = (v: string | null) =>
 			v ? Number.parseInt(v, 10) * 1000 : undefined;
 
-		const t5h = parse(reset5h);
-		const t7d = parse(reset7d);
-		if (t5h && t7d) {
-			resetTime = Math.min(t5h, t7d);
-		} else {
-			resetTime = t5h ?? t7d ?? Date.now() + 60 * 60 * 1000;
+		// Try primary/secondary headers first, then legacy x-codex-5h/7d headers
+		const resets = [
+			parseReset(response.headers.get("x-codex-primary-reset-at")),
+			parseReset(response.headers.get("x-codex-secondary-reset-at")),
+			parseReset(response.headers.get("x-codex-5h-reset-at")),
+			parseReset(response.headers.get("x-codex-7d-reset-at")),
+		].filter((v): v is number => v !== undefined);
+
+		// Use the sooner (smallest) reset time
+		const resetTime = resets.length > 0 ? Math.min(...resets) : undefined;
+
+		if (response.status !== 429) {
+			// Return reset time for DB tracking even on successful responses
+			return { isRateLimited: false, resetTime };
 		}
 
-		return { isRateLimited: true, resetTime };
+		return {
+			isRateLimited: true,
+			resetTime: resetTime ?? Date.now() + 60 * 60 * 1000,
+		};
 	}
 
 	supportsOAuth(): boolean {
@@ -480,9 +483,7 @@ export class CodexProvider extends BaseProvider {
 			reasoning: { effort: "medium" },
 		};
 
-		if (instructions) {
-			codexRequest.instructions = instructions;
-		}
+		codexRequest.instructions = instructions || "You are a helpful assistant.";
 		if (tools) {
 			codexRequest.tools = tools;
 		}

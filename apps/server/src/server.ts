@@ -16,11 +16,19 @@ import {
 } from "@better-ccflare/core";
 import { container, SERVICE_KEYS } from "@better-ccflare/core-di";
 import type { DatabaseOperations } from "@better-ccflare/database";
-import { AsyncDbWriter, DatabaseFactory } from "@better-ccflare/database";
+import {
+	AsyncDbWriter,
+	DatabaseFactory,
+	initPayloadEncryption,
+} from "@better-ccflare/database";
 import { APIRouter, AuthService } from "@better-ccflare/http-api";
 import { SessionStrategy } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
-import { getProvider, usageCache } from "@better-ccflare/providers";
+import {
+	getProvider,
+	getRepresentativeUtilizationForProvider,
+	usageCache,
+} from "@better-ccflare/providers";
 import {
 	canUseInferenceProfileDynamic,
 	parseBedrockConfig,
@@ -28,18 +36,22 @@ import {
 } from "@better-ccflare/providers/bedrock";
 import {
 	AutoRefreshScheduler,
+	CacheKeepaliveScheduler,
 	getUsageWorker,
+	getUsageWorkerHealth,
 	getValidAccessToken,
 	handleProxy,
 	type ProxyContext,
+	registerPollingRestarter,
 	registerRefreshClearer,
 	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
+	startUsageWorker,
 	stopGlobalTokenHealthChecks,
 	terminateUsageWorker,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
-import type { Account } from "@better-ccflare/types";
+import type { Account, StrategyStore } from "@better-ccflare/types";
 import { serve } from "bun";
 
 // Import embedded dashboard assets (will be bundled in compiled binary)
@@ -169,6 +181,7 @@ let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
 let stopWalCheckpointJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
+let cacheKeepaliveScheduler: CacheKeepaliveScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
 // Track usage polling retry timeouts for cleanup
 const usagePollingRetryTimeouts = new Map<string, NodeJS.Timeout>();
@@ -263,6 +276,7 @@ function startUsagePollingWithRefresh(
 	account: Account,
 	proxyContext: ProxyContext,
 	startupDelayMs: number = 0,
+	intervalMs: number = 90000,
 ) {
 	const logger = new Logger("UsagePolling");
 	const MAX_RETRY_ATTEMPTS = 10;
@@ -314,7 +328,46 @@ function startUsagePollingWithRefresh(
 				account.id,
 				tokenProvider,
 				account.provider,
-				90000, // Poll every 90s
+				intervalMs,
+				undefined, // customEndpoint
+				(accountId) => {
+					// Usage window has rolled over — reset session tracking so the
+					// dashboard reflects the new window without waiting for the next request.
+					proxyContext.dbOps
+						.resetAccountSession(accountId, Date.now())
+						.catch((err) =>
+							logger.warn(
+								`Failed to reset session for account ${accountId} on window reset: ${err}`,
+							),
+						);
+				},
+				(accountId) => {
+					// Usage API shows available capacity (<100%). If rate_limited_until is
+					// set in the future (seat-reassignment case), clear it now rather than
+					// waiting for the natural expiry timer — the polling loop has confirmed
+					// the seat is available again.
+					proxyContext.dbOps
+						.getAccount(accountId)
+						.then((acc) => {
+							if (
+								acc?.rate_limited_until &&
+								Number(acc.rate_limited_until) > Date.now()
+							) {
+								return proxyContext.dbOps
+									.forceResetAccountRateLimit(accountId)
+									.then(() => {
+										logger.info(
+											`Cleared stale rate_limited_until for account ${acc.name} (${accountId}): usage polling shows available capacity (seat reassignment or early reset)`,
+										);
+									});
+							}
+						})
+						.catch((err) =>
+							logger.warn(
+								`Failed to check/clear rate_limited_until for account ${accountId} on capacity restore: ${err}`,
+							),
+						);
+				},
 			);
 
 			// Reset retry count on success
@@ -504,6 +557,13 @@ export default async function startServer(options?: {
 	container.registerInstance(SERVICE_KEYS.Config, new Config());
 	container.registerInstance(SERVICE_KEYS.Logger, new Logger("Server"));
 
+	// Initialize payload encryption (no-op if PAYLOAD_ENCRYPTION_KEY is unset).
+	// This must run before any database operations that read/write payloads.
+	// NOTE: this only initializes the main thread; the post-processor worker
+	// runs `initPayloadEncryption()` itself at module load — Bun workers have
+	// isolated module scopes.
+	await initPayloadEncryption();
+
 	// Initialize components
 	const config = container.resolve<Config>(SERVICE_KEYS.Config);
 	const runtime = config.getRuntime();
@@ -541,6 +601,8 @@ export default async function startServer(options?: {
 			port,
 			tlsEnabled,
 		},
+		getAsyncWriterHealth: () => asyncWriter.getHealth(),
+		getUsageWorkerHealth: () => getUsageWorkerHealth(),
 	});
 
 	// Initialize AuthService for proxy authentication
@@ -593,7 +655,7 @@ export default async function startServer(options?: {
 
 	stopRateLimitCleanupJob = unregisterRateLimitCleanup;
 
-	// Set up periodic data retention cleanup every 6 hours
+	// Set up periodic data retention cleanup every 1 hour
 	const dataRetentionCleanup = async () => {
 		const startTime = Date.now();
 		try {
@@ -609,21 +671,22 @@ export default async function startServer(options?: {
 					`Periodic cleanup: removed ${removedRequests} requests, ${removedPayloads} payloads in ${Date.now() - startTime}ms`,
 				);
 				// Reclaim freed SQLite pages without a full blocking VACUUM
-				dbOps.incrementalVacuum(50000); // reclaim up to 50000 pages (~200 MB)
+				// Increased from 50000 to 200000 pages (~800 MB) for more aggressive cleanup
+				dbOps.incrementalVacuum(200000);
 			}
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);
 		}
 	};
 
-	// Periodic data retention cleanup every 6 hours.
+	// Periodic data retention cleanup every 1 hour (reduced from 6 hours for more aggressive cleanup).
 	// runStartupMaintenance() (called above) handles the initial cleanup on boot,
 	// so we don't fire dataRetentionCleanup() immediately to avoid concurrent
 	// large deletes that can spike WAL size and wedge the service.
 	const unregisterDataCleanup = registerCleanup({
 		id: "data-retention-cleanup",
 		callback: dataRetentionCleanup,
-		minutes: 360, // every 6 hours
+		minutes: 60, // every 1 hour
 		description: "Periodic data retention cleanup and incremental vacuum",
 	});
 
@@ -672,7 +735,19 @@ export default async function startServer(options?: {
 
 	// Now create the strategy with runtime config
 	const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
-	strategy.initialize(dbOps);
+
+	const strategyStore: StrategyStore = Object.assign(dbOps, {
+		getAccountUtilization(accountId: string, provider: string): number | null {
+			const data = usageCache.get(accountId);
+			if (!data) return null;
+			return getRepresentativeUtilizationForProvider(data, provider);
+		},
+	});
+
+	strategy.initialize(strategyStore);
+
+	// Start usage worker eagerly (before first request)
+	startUsageWorker();
 
 	// Proxy context
 	const usageWorker = getUsageWorker();
@@ -681,6 +756,7 @@ export default async function startServer(options?: {
 		strategy,
 		dbOps,
 		runtime: runtimeConfig,
+		config,
 		provider,
 		refreshInFlight: new Map(),
 		asyncWriter,
@@ -695,26 +771,64 @@ export default async function startServer(options?: {
 		log.info(`Cleared refresh cache for account ${accountId} on ${serverId}`);
 	});
 
+	// Register this server's usage polling restart capability
+	registerPollingRestarter(serverId, async (accountId: string) => {
+		const account = await dbOps.getAccount(accountId);
+		if (!account) {
+			log.warn(
+				`Cannot restart usage polling: account ${accountId} not found on ${serverId}`,
+			);
+			return false;
+		}
+		if (account.provider !== "anthropic") {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} is not an Anthropic OAuth account`,
+			);
+			return false;
+		}
+		if (!account.access_token && !account.refresh_token) {
+			log.warn(
+				`Cannot restart usage polling: account ${account.name} has no tokens`,
+			);
+			return false;
+		}
+		log.info(
+			`Restarting usage polling for account ${account.name} on ${serverId}`,
+		);
+		usageCache.stopPolling(accountId);
+		startUsagePollingWithRefresh(
+			account,
+			proxyContext,
+			0,
+			config.getUsagePollIntervalMs(),
+		);
+		return true;
+	});
+
 	// Initialize auto-refresh scheduler (now that proxyContext is available)
 	autoRefreshScheduler = new AutoRefreshScheduler(db, proxyContext);
 	autoRefreshScheduler.start();
+
+	// Initialize cache keepalive scheduler
+	cacheKeepaliveScheduler = new CacheKeepaliveScheduler(proxyContext, config);
+	cacheKeepaliveScheduler.start();
 
 	// Initialize token health monitoring service
 	startGlobalTokenHealthChecks(() => dbOps.getAllAccounts());
 
 	// Hot reload strategy configuration
-	config.on("change", (changeType, fieldName) => {
-		if (fieldName === "strategy") {
-			log.info(`Strategy configuration changed: ${changeType}`);
+	config.on("change", ({ key }: { key: string }) => {
+		if (key === "lb_strategy") {
+			log.info(`Strategy configuration changed to: ${config.getStrategy()}`);
 			const newStrategyName = config.getStrategy();
 			// For now, only SessionStrategy is supported
 			if (newStrategyName === "session") {
 				const strategy = new SessionStrategy(runtimeConfig.sessionDurationMs);
-				strategy.initialize(dbOps);
+				strategy.initialize(strategyStore);
 				proxyContext.strategy = strategy;
 			}
 		}
-		if (fieldName === "store_payloads") {
+		if (key === "store_payloads") {
 			sendWorkerConfigUpdate(config.getStorePayloads());
 		}
 	});
@@ -995,7 +1109,12 @@ Available endpoints:
 				// Usage data fetching should work independently of account paused status
 				// Stagger startup by 5s per account to avoid simultaneous 429s on boot
 				const startupDelayMs = index * 5000;
-				startUsagePollingWithRefresh(account, proxyContext, startupDelayMs);
+				startUsagePollingWithRefresh(
+					account,
+					proxyContext,
+					startupDelayMs,
+					config.getUsagePollIntervalMs(),
+				);
 				log.info(
 					`Started usage polling for account ${account.name}${startupDelayMs > 0 ? ` (delayed ${startupDelayMs / 1000}s)` : ""}`,
 				);
@@ -1033,7 +1152,7 @@ Available endpoints:
 					account.id,
 					apiKeyProvider,
 					account.provider,
-					90000, // Poll every 90 seconds (same as Anthropic)
+					config.getUsagePollIntervalMs(),
 					account.custom_endpoint,
 				);
 				log.info(`Started usage polling for NanoGPT account ${account.name}`);
@@ -1070,7 +1189,17 @@ Available endpoints:
 					account.id,
 					apiKeyProvider,
 					account.provider,
-					90000, // Poll every 90 seconds (same as Anthropic)
+					config.getUsagePollIntervalMs(),
+					undefined, // customEndpoint
+					(accountId) => {
+						dbOps
+							.resetAccountSession(accountId, Date.now())
+							.catch((err) =>
+								log.warn(
+									`Failed to reset session for Zai account ${accountId} on window reset: ${err}`,
+								),
+							);
+					},
 				);
 				log.info(`Started usage polling for Zai account ${account.name}`);
 			} else {
@@ -1096,7 +1225,7 @@ Available endpoints:
 					account.id,
 					apiKeyProvider,
 					account.provider,
-					90000,
+					config.getUsagePollIntervalMs(),
 				);
 				log.info(
 					`Started usage polling for Kilo Gateway account ${account.name}`,
@@ -1188,6 +1317,10 @@ async function handleGracefulShutdown(signal: string) {
 			autoRefreshScheduler.stop();
 			autoRefreshScheduler = null;
 		}
+		if (cacheKeepaliveScheduler) {
+			cacheKeepaliveScheduler.stop();
+			cacheKeepaliveScheduler = null;
+		}
 
 		// Stop memory monitoring
 		if (memoryMonitorInterval) {
@@ -1213,7 +1346,7 @@ async function handleGracefulShutdown(signal: string) {
 		}
 
 		usageCache.clear(); // Stop all usage polling
-		terminateUsageWorker();
+		await terminateUsageWorker();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);

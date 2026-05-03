@@ -1,4 +1,30 @@
+import { Logger } from "@better-ccflare/logger";
+import { decryptPayload, encryptPayload } from "../payload-encryption";
 import { BaseRepository } from "./base.repository";
+
+const log = new Logger("RequestRepository");
+
+/**
+ * Decrypt a stored payload for a list endpoint, swallowing per-row errors
+ * so a single corrupted/tampered row cannot take down the whole list.
+ *
+ * The error is logged so misconfiguration is still observable, and a JSON
+ * placeholder is substituted that the dashboard can render as "unreadable".
+ *
+ * Single-row reads (`getPayload`) MUST stay strict and let the error
+ * propagate — there's no fallback that makes sense for a single row.
+ */
+async function decryptForList(id: string, json: string): Promise<string> {
+	try {
+		return await decryptPayload(json);
+	} catch (err) {
+		log.error(`Failed to decrypt payload ${id}:`, err);
+		return JSON.stringify({
+			error: "Payload could not be decrypted",
+			id,
+		});
+	}
+}
 
 export interface RequestData {
 	id: string;
@@ -13,6 +39,9 @@ export interface RequestData {
 	agentUsed?: string;
 	apiKeyId?: string;
 	apiKeyName?: string;
+	project?: string | null;
+	billingType?: string;
+	comboName?: string | null;
 	usage?: {
 		model?: string;
 		promptTokens?: number;
@@ -37,15 +66,16 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		timestamp?: number,
 		apiKeyId?: string,
 		apiKeyName?: string,
+		project?: string | null,
 	): Promise<void> {
 		await this.run(
 			`
 			INSERT INTO requests (
 				id, timestamp, method, path, account_used,
 				status_code, success, error_message, response_time_ms, failover_attempts,
-				api_key_id, api_key_name
+				api_key_id, api_key_name, project
 			)
-			VALUES (?, ?, ?, ?, ?, ?, FALSE, NULL, 0, 0, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, FALSE, NULL, 0, 0, ?, ?, ?)
 		`,
 			[
 				id,
@@ -56,6 +86,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				statusCode,
 				apiKeyId || null,
 				apiKeyName || null,
+				project || null,
 			],
 		);
 	}
@@ -69,9 +100,10 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				status_code, success, error_message, response_time_ms, failover_attempts,
 				model, prompt_tokens, completion_tokens, total_tokens, cost_usd,
 				input_tokens, cache_read_input_tokens, cache_creation_input_tokens, output_tokens,
-				agent_used, output_tokens_per_second, api_key_id, api_key_name
+				agent_used, output_tokens_per_second, api_key_id, api_key_name, project,
+				billing_type, combo_name
 			)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (id) DO UPDATE SET
 				timestamp = EXCLUDED.timestamp,
 				method = EXCLUDED.method,
@@ -94,7 +126,10 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				agent_used = EXCLUDED.agent_used,
 				output_tokens_per_second = EXCLUDED.output_tokens_per_second,
 				api_key_id = EXCLUDED.api_key_id,
-				api_key_name = EXCLUDED.api_key_name
+				api_key_name = EXCLUDED.api_key_name,
+				project = COALESCE(EXCLUDED.project, requests.project),
+				billing_type = COALESCE(EXCLUDED.billing_type, requests.billing_type),
+				combo_name = COALESCE(EXCLUDED.combo_name, requests.combo_name)
 		`,
 			[
 				data.id,
@@ -120,6 +155,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				usage?.tokensPerSecond || null,
 				data.apiKeyId || null,
 				data.apiKeyName || null,
+				data.project || null,
+				data.billingType || null,
+				data.comboName || null,
 			],
 		);
 	}
@@ -165,20 +203,22 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	// Payload management
 	async savePayload(id: string, data: unknown): Promise<void> {
 		const json = JSON.stringify(data);
+		const stored = await encryptPayload(json);
 		const ts = Date.now();
 		await this.run(
 			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
 			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
-			[id, json, ts],
+			[id, stored, ts],
 		);
 	}
 
 	async savePayloadRaw(id: string, json: string): Promise<void> {
+		const stored = await encryptPayload(json);
 		const ts = Date.now();
 		await this.run(
 			`INSERT INTO request_payloads (id, json, timestamp) VALUES (?, ?, ?)
 			 ON CONFLICT (id) DO UPDATE SET json = EXCLUDED.json, timestamp = EXCLUDED.timestamp`,
-			[id, json, ts],
+			[id, stored, ts],
 		);
 	}
 
@@ -190,15 +230,20 @@ export class RequestRepository extends BaseRepository<RequestData> {
 
 		if (!row) return null;
 
+		// Decryption errors must propagate — they indicate tampering, a wrong key,
+		// or a missing key for an encrypted row. Silently returning null would
+		// hide real misconfiguration. Only JSON parse errors are tolerated, since
+		// historical rows may contain malformed payloads.
+		const decoded = await decryptPayload(row.json);
 		try {
-			return JSON.parse(row.json);
+			return JSON.parse(decoded);
 		} catch {
 			return null;
 		}
 	}
 
 	async listPayloads(limit = 50): Promise<Array<{ id: string; json: string }>> {
-		return this.query<{ id: string; json: string }>(
+		const rows = await this.query<{ id: string; json: string }>(
 			`
 			SELECT rp.id, rp.json
 			FROM request_payloads rp
@@ -208,25 +253,45 @@ export class RequestRepository extends BaseRepository<RequestData> {
 		`,
 			[limit],
 		);
+		return Promise.all(
+			rows.map(async (row) => ({
+				id: row.id,
+				json: await decryptForList(row.id, row.json),
+			})),
+		);
 	}
 
-	async listPayloadsWithAccountNames(
-		limit = 50,
-	): Promise<Array<{ id: string; json: string; account_name: string | null }>> {
-		return this.query<{
+	async listPayloadsWithAccountNames(limit = 50): Promise<
+		Array<{
 			id: string;
-			json: string;
+			json: string | null;
+			timestamp: number;
+			account_name: string | null;
+		}>
+	> {
+		const rows = await this.query<{
+			id: string;
+			json: string | null;
+			timestamp: number;
 			account_name: string | null;
 		}>(
 			`
-			SELECT rp.id, rp.json, a.name as account_name
-			FROM request_payloads rp
-			JOIN requests r ON rp.id = r.id
+			SELECT r.id, r.timestamp, rp.json, a.name as account_name
+			FROM requests r
+			LEFT JOIN request_payloads rp ON rp.id = r.id
 			LEFT JOIN accounts a ON r.account_used = a.id
 			ORDER BY r.timestamp DESC
 			LIMIT ?
 		`,
 			[limit],
+		);
+		return Promise.all(
+			rows.map(async (row) => ({
+				id: row.id,
+				timestamp: row.timestamp,
+				json: row.json ? await decryptForList(row.id, row.json) : null,
+				account_name: row.account_name,
+			})),
 		);
 	}
 
@@ -441,7 +506,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deleteOlderThan(cutoffTs: number): Promise<number> {
-		const BATCH_SIZE = 500;
+		// Increased from 500 to 2000 for more aggressive cleanup of large databases.
+		// The covering index idx_requests_cleanup makes each batch faster.
+		const BATCH_SIZE = 2000;
 		let total = 0;
 		let deleted: number;
 		do {
@@ -463,7 +530,9 @@ export class RequestRepository extends BaseRepository<RequestData> {
 	}
 
 	async deletePayloadsOlderThan(cutoffTs: number): Promise<number> {
-		const BATCH_SIZE = 500;
+		// Increased from 500 to 2000 for more aggressive cleanup of large databases.
+		// The covering index idx_request_payloads_cleanup makes each batch faster.
+		const BATCH_SIZE = 2000;
 		let total = 0;
 		let deleted: number;
 		do {

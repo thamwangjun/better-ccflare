@@ -1,4 +1,4 @@
-import { requestEvents } from "@better-ccflare/core";
+import { requestEvents, TIME_CONSTANTS } from "@better-ccflare/core";
 import {
 	sanitizeRequestHeaders,
 	withSanitizedProxyHeaders,
@@ -6,24 +6,30 @@ import {
 import { ANALYTICS_STREAM_SYMBOL } from "@better-ccflare/http-common/symbols";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
+import { handleRateLimitResponse } from "./handlers/response-processor";
+import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
+import type { UsageWorkerController } from "./usage-worker-controller";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
+
+// Default cooldown for rate-limit errors detected mid-stream. SSE error
+// frames don't carry reset headers (HTTP headers were sent before the
+// error occurred), so we fall back to the same 5h default that
+// response-processor.ts uses for headerless 429 responses.
+const MID_STREAM_RATE_LIMIT_COOLDOWN_MS = 5 * 60 * 60 * 1000;
 
 // Must match MAX_REQUEST_BODY_BYTES in post-processor.worker.ts.
 // Cap applied before postMessage to avoid multi-MB structured clones.
-const MAX_REQUEST_BODY_BYTES = 256 * 1024;
+// 4MB so afterburn can see full conversation history for friction analysis.
+const MAX_REQUEST_BODY_BYTES = 4 * 1024 * 1024;
 
-/**
- * Safely post a message to the worker, handling terminated workers
- */
 function safePostMessage(
-	worker: Worker,
+	worker: UsageWorkerController,
 	message: StartMessage | ChunkMessage | EndMessage,
 ): void {
 	try {
 		worker.postMessage(message);
 	} catch (_error) {
-		// Worker has been terminated, silently ignore
-		// The error will be logged by the worker error handler in proxy.ts
+		// Worker not ready or terminated — silently ignore
 	}
 }
 
@@ -55,6 +61,7 @@ export interface ResponseHandlerOptions {
 	agentUsed?: string | null;
 	apiKeyId?: string | null;
 	apiKeyName?: string | null;
+	comboName?: string | null;
 }
 
 /**
@@ -80,6 +87,7 @@ export async function forwardToClient(
 		agentUsed,
 		apiKeyId,
 		apiKeyName,
+		comboName,
 	} = options;
 
 	// Always strip compression headers *before* we do anything else
@@ -103,6 +111,7 @@ export async function forwardToClient(
 	if (shouldProcessRequest) {
 		const startMessage: StartMessage = {
 			type: "start",
+			messageId: crypto.randomUUID(),
 			requestId,
 			accountId: account?.id || null,
 			method,
@@ -132,7 +141,13 @@ export async function forwardToClient(
 			responseHeaders: responseHeadersObj,
 			isStream,
 			providerName: ctx.provider.name,
+			accountBillingType: account?.billing_type ?? null,
+			accountAutoPauseOnOverageEnabled: account?.auto_pause_on_overage_enabled
+				? 1
+				: 0,
+			accountName: account?.name ?? null,
 			agentUsed: agentUsed || null,
+			comboName: comboName || null,
 			apiKeyId: apiKeyId || null,
 			apiKeyName: apiKeyName || null,
 			retryAttempt,
@@ -171,9 +186,23 @@ export async function forwardToClient(
 					})
 				: response.clone();
 
+		// Mid-stream rate-limit detection for issue #114 Fix 1.2. Only
+		// create a sniffer when we know which account to mark — anonymous
+		// or unauthenticated requests can't be failed over.
+		const rateLimitSniffer = account ? createSseRateLimitSniffer() : null;
+
 		(async () => {
-			const STREAM_TIMEOUT_MS = 300000; // 5 minutes max stream duration
-			const CHUNK_TIMEOUT_MS = 30000; // 30 seconds between chunks
+			// Configurable via env vars to support long agentic workloads where
+			// nested sub-calls (e.g. recursive claude-code-sdk sessions) can leave
+			// the outer stream silent for extended periods (issue #84).
+			const STREAM_TIMEOUT_MS = Number(
+				process.env.CF_STREAM_TOTAL_TIMEOUT_MS ??
+					TIME_CONSTANTS.STREAM_FORWARD_TOTAL_TIMEOUT_MS,
+			);
+			const CHUNK_TIMEOUT_MS = Number(
+				process.env.CF_STREAM_CHUNK_TIMEOUT_MS ??
+					TIME_CONSTANTS.STREAM_FORWARD_CHUNK_TIMEOUT_MS,
+			);
 
 			try {
 				const reader = analyticsClone.body?.getReader();
@@ -235,6 +264,19 @@ export async function forwardToClient(
 								data: value,
 							};
 							safePostMessage(ctx.usageWorker, chunkMsg);
+
+							// Mid-stream rate-limit detection. The sniffer
+							// fires exactly once; after that feed() is a no-op.
+							if (account && rateLimitSniffer?.feed(value)) {
+								handleRateLimitResponse(
+									account,
+									{
+										isRateLimited: true,
+										resetTime: Date.now() + MID_STREAM_RATE_LIMIT_COOLDOWN_MS,
+									},
+									ctx,
+								);
+							}
 						}
 					} catch (error) {
 						// Ensure timeout is cleared on error

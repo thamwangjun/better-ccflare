@@ -5,7 +5,9 @@
 	"main": "./src/index.ts",
 	"exports": {
 		".": "./src/index.ts",
-		"./bedrock": "./src/providers/bedrock/index.ts"
+		"./bedrock": "./src/providers/bedrock/index.ts",
+		"./codex": "./src/providers/codex/index.ts",
+		"./qwen": "./src/providers/qwen/index.ts"
 	},
 	"scripts": {
 		"typecheck": "bunx tsc --noEmit"
@@ -15,6 +17,7 @@
 		"@aws-sdk/client-bedrock-runtime": "^3.1014.0",
 		"@aws-sdk/credential-providers": "^3.1021.0",
 		"@better-ccflare/core": "workspace:*",
+		"@better-ccflare/openai-formats": "workspace:*",
 		"google-auth-library": "^10.6.2"
 	}
 }
