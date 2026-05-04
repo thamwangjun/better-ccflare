@@ -259,6 +259,7 @@ export class OpenAICompatibleProvider extends BaseProvider {
 					  }
 					| undefined;
 
+				// FORK PATCH: cache_write_tokens from prompt_tokens_details (OpenRouter)
 				const cacheCreationInputTokens =
 					promptTokensDetails?.cache_creation_input_tokens ||
 					promptTokensDetails?.cache_write_tokens ||
