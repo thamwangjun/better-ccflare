@@ -11,7 +11,7 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		super({
 			name: "openrouter",
 			baseUrl: OPENROUTER_DEFAULT_ENDPOINT,
-			authHeader: "Authorization",
+			authHeader: "authorization",
 			authType: "bearer",
 			supportsStreaming: true,
 		});
