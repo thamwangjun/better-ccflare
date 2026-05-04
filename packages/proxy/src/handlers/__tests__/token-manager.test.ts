@@ -47,9 +47,9 @@ describe("getValidAccessToken", () => {
 
 		it("throws when api_key is missing", async () => {
 			const account = makeAccount({ api_key: null });
-			await expect(
-				getValidAccessToken(account, unusedCtx),
-			).rejects.toThrow("No API key available");
+			await expect(getValidAccessToken(account, unusedCtx)).rejects.toThrow(
+				"No API key available",
+			);
 		});
 	});
 
