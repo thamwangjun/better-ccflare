@@ -257,15 +257,20 @@ export function transformStreamingResponse(response: Response): Response {
 								if (data.usage.completion_tokens) {
 									context.completionTokens = data.usage.completion_tokens;
 								}
-								// Extract cache statistics from prompt_tokens_details (Qwen/DashScope)
+								// Extract cache statistics from prompt_tokens_details (Qwen/DashScope, OpenRouter)
 								if (data.usage.prompt_tokens_details) {
 									const details = data.usage.prompt_tokens_details as {
 										cache_creation_input_tokens?: number;
+										cache_write_tokens?: number;
 										cached_tokens?: number;
 									};
 									if (details.cache_creation_input_tokens) {
 										context.cacheCreationInputTokens =
 											details.cache_creation_input_tokens;
+									}
+									if (details.cache_write_tokens) {
+										context.cacheCreationInputTokens =
+											details.cache_write_tokens;
 									}
 									if (details.cached_tokens) {
 										context.cacheReadInputTokens = details.cached_tokens;

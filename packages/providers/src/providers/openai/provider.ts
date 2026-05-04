@@ -250,16 +250,19 @@ export class OpenAICompatibleProvider extends BaseProvider {
 				const totalTokens =
 					json.usage.total_tokens || promptTokens + completionTokens;
 
-				// Extract cache statistics from prompt_tokens_details (Qwen/DashScope)
+				// Extract cache statistics from prompt_tokens_details (Qwen/DashScope, OpenRouter)
 				const promptTokensDetails = json.usage.prompt_tokens_details as
 					| {
 							cache_creation_input_tokens?: number;
+							cache_write_tokens?: number;
 							cached_tokens?: number;
 					  }
 					| undefined;
 
 				const cacheCreationInputTokens =
-					promptTokensDetails?.cache_creation_input_tokens || 0;
+					promptTokensDetails?.cache_creation_input_tokens ||
+					promptTokensDetails?.cache_write_tokens ||
+					0;
 				const cacheReadInputTokens = promptTokensDetails?.cached_tokens || 0;
 
 				// Calculate cost using OpenAI-compatible pricing
