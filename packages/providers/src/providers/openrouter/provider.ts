@@ -29,7 +29,11 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		const baseUrl = (
 			account?.custom_endpoint || OPENROUTER_DEFAULT_ENDPOINT
 		).replace(/\/$/, "");
-		return `${baseUrl}${pathname}${search}`;
+		// Strip /v1 prefix since baseUrl already contains /api/v1
+		const cleanPathname = pathname.startsWith("/v1")
+			? pathname.slice(3)
+			: pathname;
+		return `${baseUrl}${cleanPathname}${search}`;
 	}
 
 	override async transformRequestBody(
