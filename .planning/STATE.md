@@ -1,76 +1,77 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 02
-status: ready_to_plan
-last_updated: "2026-05-05T07:10:52.399Z"
+milestone: v1.1
+milestone_name: TBD
+current_phase: none
+status: milestone_complete
+last_updated: "2026-05-05"
 progress:
-  total_phases: 2
-  completed_phases: 1
-  total_plans: 4
-  completed_plans: 3
-  percent: 75
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 **Project:** better-ccflare (Personal Fork)
-**Started:** 2026-05-04
-**Current Phase:** 02
+**v1.0 Shipped:** 2026-05-05
+**Current Phase:** None — planning next milestone
 
 ## Phase Status
 
 | Phase | Name | Status |
 |-------|------|--------|
-| 1 | Correctness & Patch Hardening | Pending |
-| 2 | Fork Maintenance Tooling | Pending |
-
-## Current Position
-
-Phase: 02 (fork-maintenance-tooling) — EXECUTING
-Plan: 1 of 1
-**Active phase:** None — project initialized, ready for Phase 1
-**Active plan:** None
-**Last action:** Roadmap created (2026-05-04)
+| 1 | Correctness & Patch Hardening | ✅ Complete |
+| 2 | Fork Maintenance Tooling | ✅ Complete |
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-05-04)
+See: `.planning/PROJECT.md` (updated 2026-05-05 after v1.0 milestone)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Phase 02 — fork-maintenance-tooling
+**Current focus:** Planning v1.1 — run `/gsd-new-milestone` to define scope
+
+## Deferred Items
+
+Items acknowledged and deferred at milestone close on 2026-05-05:
+
+| Category | Item | Status |
+|----------|------|--------|
+| tech_debt | SC-2 (CACHE-02): Live non-Anthropic model request test | Deferred — human verification required |
+| tech_debt | REQUIREMENTS.md CACHE-02 wording mismatch | Deferred — cosmetic only |
+| tech_debt | Phase 2 missing VERIFICATION.md | Deferred — artifact gap only |
 
 ## Performance Metrics
 
 | Metric | Value |
 |--------|-------|
-| Phases completed | 0 / 2 |
-| Requirements delivered | 0 / 7 |
-| Plans completed | 0 |
+| Phases completed | 2 / 2 |
+| Requirements delivered | 7 / 7 |
+| Plans completed | 4 |
 
-## Accumulated Context
-
-### Key constraints active
+## Key Constraints
 
 - Never test via `claude` account or direct Anthropic endpoints — risk of account ban
 - `inline-worker.ts` is auto-generated — never edit directly
 - Version bumps are automated — never bump manually
 - All changes must pass `bun run lint && bun run typecheck && bun run format`
 
-### High-risk files (require pre-merge inspection)
+## High-Risk Files (for upstream merges)
 
-- `packages/providers/src/providers/openai/provider.ts` — contains `cache_write_tokens` FORK PATCH, upstream actively refactors this file
+- `packages/providers/src/providers/openai/provider.ts` — contains `cache_write_tokens` FORK PATCH (~line 262), upstream actively refactors this file
 - `packages/providers/src/providers/openrouter/provider.ts` — OpenRouter-specific overrides
 - `packages/types/src/account.ts` — shared type file; structural changes here cause cascade conflicts
 
-### Fork patches currently on `thamw-main`
+## Fork Patches on `thamw-main` (v1.0 state)
 
-- `cache_write_tokens` extraction from `prompt_tokens_details` (openai/provider.ts)
-- OpenRouter `cache_control` ephemeral injection (openrouter/provider.ts)
-- Biome formatter applied to test files
+- `// FORK PATCH:` comment + `cache_write_tokens` extraction from `prompt_tokens_details` (`openai/provider.ts`)
+- OpenRouter `cache_control` ephemeral per-block injection at 3 breakpoints (`openrouter/provider.ts`)
+- 10-test regression suite (`openrouter/__tests__/provider.test.ts`)
+- Pre/post merge scripts + SOP (`.planning/scripts/`, `.planning/fork_plans/UPSTREAM_MERGE.md`)
 
-### Quick Tasks Completed
+## Quick Tasks Completed
 
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
@@ -78,8 +79,4 @@ See: `.planning/PROJECT.md` (updated 2026-05-04)
 
 ## Session Continuity
 
-**To resume:** Run `/gsd-plan-phase 1` to create an executable plan for Phase 1.
-
-**Phase 1 entry conditions:** None — can start immediately.
-
-**Phase 2 entry conditions:** Phase 1 complete and stable (correctness fixes validated before adding merge process complexity).
+**v1.0 archived.** To start v1.1: run `/gsd-new-milestone` for questioning → research → requirements → roadmap.

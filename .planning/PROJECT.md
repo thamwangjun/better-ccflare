@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A maintained personal fork of [better-ccflare](https://github.com/tombii/better-ccflare) — a Bun-based Claude API load balancer proxy that distributes requests across multiple account providers to avoid rate limiting. This fork continuously pulls upstream releases and layers personal improvements: provider enhancements, bug fixes that haven't landed upstream, and infra customizations.
+A maintained personal fork of [better-ccflare](https://github.com/tombii/better-ccflare) — a Bun-based Claude API load balancer proxy that distributes requests across multiple account providers to avoid rate limiting. This fork continuously pulls upstream releases and layers personal improvements: corrected OpenRouter billing and cache injection, fork patch annotations and regression tests, and operational tooling for safe upstream merges.
 
 ## Core Value
 
@@ -12,33 +12,47 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 ### Validated
 
-- ✓ OpenRouter cache_write_tokens extraction from `prompt_tokens_details` — on branch
-- ✓ OpenRouter `cache_control` ephemeral injection into requests — on branch
-- ✓ Biome formatter applied to test files — on branch
+- ✓ OpenRouter `extractUsageInfo` reads `prompt_tokens_details.cache_write_tokens` (accurate cache billing) — v1.0
+- ✓ OpenRouter `cache_control` ephemeral per-block injection at 3 Anthropic breakpoints — v1.0
+- ✓ `// FORK PATCH:` comment annotations on fork-specific code for upstream merge safety — v1.0
+- ✓ 10-test regression suite covering all OpenRouter cache scenarios — v1.0
+- ✓ `pre-merge-check.sh` + `post-merge-export.sh` scripts with `bun run` aliases — v1.0
+- ✓ Agent-executable 6-step `UPSTREAM_MERGE.md` SOP with per-file conflict resolution — v1.0
 
 ### Active
 
-- [ ] Improved caching for the OpenRouter provider (deeper cache hit optimization beyond basic injection)
-- [ ] Per-request OpenRouter provider selection (ability to pin requests to a specific upstream provider on OpenRouter, e.g. force `openai` or `anthropic` as the backend)
-- [ ] Documented, repeatable upstream merge process (merge → resolve conflicts → reapply patches safely)
+- [ ] Per-request OpenRouter provider selection (`x-better-ccflare-openrouter-provider` header → `provider.order` injection)
+- [ ] Per-account OpenRouter provider preference via ENV var
+- [ ] Dashboard UI for per-account OpenRouter provider preference
+- [ ] Extended cache breakpoints (up to 4-breakpoint limit — system + high-token user message)
+- [ ] 1-hour TTL on cache blocks for agentic sessions exceeding the 5-minute sticky routing window
 
 ### Out of Scope
 
 - Maintaining the upstream project — that's tombii's responsibility; we contribute back selectively
 - Auto-publishing to npm/GitHub Container Registry — upstream's release system handles this; never bump versions manually
 - Rebuilding or replacing core proxy logic — extend the existing provider abstraction, don't rewrite it
+- `provider.only` support — eliminates all fallback; always use `provider.order`
 
 ## Context
+
+**Shipped:** v1.0 (2026-05-05) — 2 phases, 4 plans, ~35 commits in 2 days.
 
 **Codebase:** Bun monorepo (`apps/server`, `apps/cli`, ~15 `packages/`). Provider abstraction layer in `packages/providers/src/providers/` — each provider extends `BaseProvider` with `buildRequest()`, `parseRateLimit()`, `getUsage()`. OpenRouter lives at `packages/providers/src/providers/openrouter/`.
 
 **Branch strategy:** `thamw-main` is the personal working branch. `main` tracks upstream. Upstream is added as a remote (`upstream`). Merges flow: `upstream/main` → `main` → `thamw-main`.
 
-**Existing patches:** All three validated requirements are already merged onto `thamw-main`. They touch the OpenRouter provider and test files — low conflict surface with upstream.
-
-**OpenRouter specifics:** OpenRouter's API supports a `provider` parameter in requests to pin the backend provider. It also has non-standard streaming behavior for tool calls (incremental argument chunks vs. cumulative). Any OpenRouter work must account for this.
+**Fork patches on `thamw-main` (v1.0 state):**
+- `// FORK PATCH:` comment + `cache_write_tokens` extraction from `prompt_tokens_details` (`openai/provider.ts` line ~262)
+- OpenRouter `cache_control` ephemeral per-block injection at 3 breakpoints (`openrouter/provider.ts`)
+- 10-test regression suite (`openrouter/__tests__/provider.test.ts`)
+- Pre/post merge scripts + SOP (`.planning/scripts/`, `.planning/fork_plans/UPSTREAM_MERGE.md`)
 
 **Testing constraint:** Never test via the `claude` account or direct Anthropic endpoints. Use non-Anthropic accounts (ollama, litellm, openrouter with `z-ai/glm-4.5-air:free`) and force-route with `x-better-ccflare-account-id`.
+
+**Known tech debt (v1.0):**
+- Live non-Anthropic model request test deferred — manual verification needed: send `z-ai/glm-4.5-air:free` via proxy to OpenRouter account and confirm 2xx with no 400 errors
+- Pre-existing 27 Biome lint errors in dashboard React components (unrelated to fork patches)
 
 ## Constraints
 
@@ -52,9 +66,13 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Fork upstream rather than contribute all changes back | Some changes (infra, personal config) aren't appropriate for upstream; faster iteration | — Pending |
-| Target OpenRouter as primary enhancement surface | Most flexible provider — supports provider selection, has non-standard behavior worth improving | — Pending |
+| Fork upstream rather than contribute all changes back | Some changes (infra, personal config) aren't appropriate for upstream; faster iteration | ✓ Good |
+| Target OpenRouter as primary enhancement surface | Most flexible provider — supports provider selection, has non-standard behavior worth improving | ✓ Good |
 | Keep patches minimal and localized | Easier to reapply after upstream merges; smaller conflict surface | ✓ Good |
+| Override `extractUsageInfo` in `OpenRouterProvider` rather than modify base class | OpenRouter's `prompt_tokens_details` format is non-standard; modifying base would break Anthropic/Bedrock paths | ✓ Good |
+| Omit `anthropic/*` model prefix gate on `cache_control` injection | Gate would block all non-Anthropic OpenRouter requests; per-block injection is safe for all routes | ✓ Good |
+| Hardcode high-risk file list in `pre-merge-check.sh` | Simpler and stable for a 3-file surface; dynamic scanning adds complexity without benefit | ✓ Good |
+| Gitignore generated patch exports (`.planning/patches/`) | Regenerated on every merge run; git tags provide durable commit references | ✓ Good |
 
 ## Evolution
 
@@ -74,4 +92,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-04 after initialization*
+*Last updated: 2026-05-05 after v1.0 milestone*
