@@ -22,7 +22,9 @@
 		"build:cli": "bun run --cwd apps/cli build",
 		"build:lander": "bun run --cwd apps/lander build",
 		"format": "bunx biome format --write .",
-		"lint": "bunx --bun biome check --write --unsafe ."
+		"lint": "bunx --bun biome check --write --unsafe .",
+		"pre-merge-check": "bash .planning/scripts/pre-merge-check.sh",
+		"post-merge-export": "bash .planning/scripts/post-merge-export.sh"
 	},
 	"engines": {
 		"bun": ">=1.2.8"
