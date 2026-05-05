@@ -48,7 +48,7 @@ Plans:
 **Plans:** 1 plan
 
 Plans:
-- [ ] 02-01-PLAN.md — Create pre-merge-check.sh (MAINT-01), post-merge-export.sh (MAINT-02, MAINT-03), package.json aliases, and UPSTREAM_MERGE.md agent SOP
+- [x] 02-01-PLAN.md — Create pre-merge-check.sh (MAINT-01), post-merge-export.sh (MAINT-02, MAINT-03), package.json aliases, and UPSTREAM_MERGE.md agent SOP
 
 **UI hint:** no
 
