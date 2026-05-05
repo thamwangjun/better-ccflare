@@ -294,6 +294,8 @@ export class AutoRefreshScheduler {
 				billing_type: null,
 				pause_reason: null,
 				refresh_token_issued_at: null,
+				// FORK PATCH: JSON string for OpenRouter provider.order preference
+				openrouter_provider_preference: null,
 			};
 
 			// Emit request start event for analytics
@@ -764,6 +766,8 @@ export class AutoRefreshScheduler {
 					billing_type: null,
 					pause_reason: null,
 					refresh_token_issued_at: null,
+					// FORK PATCH: JSON string for OpenRouter provider.order preference
+					openrouter_provider_preference: null,
 				};
 
 				// Use refreshAccessTokenSafe to get deduplication and backoff handling
@@ -890,6 +894,8 @@ export class AutoRefreshScheduler {
 					billing_type: null,
 					pause_reason: null,
 					refresh_token_issued_at: null,
+					// FORK PATCH: JSON string for OpenRouter provider.order preference
+					openrouter_provider_preference: null,
 				};
 
 				// Register in refreshInFlight so concurrent request-triggered refreshes join this one

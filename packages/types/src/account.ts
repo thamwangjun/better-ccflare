@@ -111,6 +111,8 @@ export interface AccountRow {
 	billing_type?: string | null; // Per-account billing override
 	pause_reason?: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 	refresh_token_issued_at?: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
+	// FORK PATCH: JSON string for OpenRouter provider.order preference
+	openrouter_provider_preference?: string | null;
 }
 
 // Domain model - used throughout the application
@@ -145,6 +147,8 @@ export interface Account {
 	billing_type: string | null;
 	pause_reason: string | null; // null=not paused, 'manual'=user paused, 'failure_threshold'=auto-refresh failures, 'overage'=billing overage
 	refresh_token_issued_at: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
+	// FORK PATCH: JSON string for OpenRouter provider.order preference
+	openrouter_provider_preference: string | null;
 }
 
 // Session statistics for 5-hour token window
@@ -190,6 +194,8 @@ export interface AccountResponse {
 	crossRegionMode?: string | null; // Cross-region inference mode for Bedrock accounts
 	modelFallbacks?: { [key: string]: string } | null;
 	billingType?: string | null;
+	// FORK PATCH: JSON string for OpenRouter provider.order preference
+	openrouterProviderPreference: string[] | null;
 	sessionStats: SessionStats | null;
 }
 
@@ -312,6 +318,8 @@ export function toAccount(row: AccountRow): Account {
 		billing_type: row.billing_type || null,
 		pause_reason: row.pause_reason || null,
 		refresh_token_issued_at: toNumOrNull(row.refresh_token_issued_at),
+		// FORK PATCH: JSON string for OpenRouter provider.order preference
+		openrouter_provider_preference: row.openrouter_provider_preference || null,
 	};
 }
 
@@ -363,6 +371,17 @@ export function toAccountResponse(account: Account): AccountResponse {
 		}
 	}
 
+	// FORK PATCH: parse openrouter_provider_preference JSON string to string[]
+	let openrouterProviderPreference: string[] | null = null;
+	if (account.openrouter_provider_preference) {
+		try {
+			const parsed = JSON.parse(account.openrouter_provider_preference);
+			openrouterProviderPreference = Array.isArray(parsed) ? parsed : null;
+		} catch {
+			openrouterProviderPreference = null;
+		}
+	}
+
 	return {
 		id: account.id,
 		name: account.name,
@@ -398,6 +417,8 @@ export function toAccountResponse(account: Account): AccountResponse {
 		hasRefreshToken: !!account.refresh_token, // OAuth accounts have refresh tokens
 		modelFallbacks,
 		billingType: account.billing_type,
+		// FORK PATCH: JSON string for OpenRouter provider.order preference
+		openrouterProviderPreference,
 		sessionStats: null,
 	};
 }
