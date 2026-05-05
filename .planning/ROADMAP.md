@@ -42,8 +42,8 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Plans**: 2 plans
 
 Plans:
-- [ ] 03-01-PLAN.md — Write failing test scaffolds for repository SELECT/UPDATE and type mapper behavior (TDD RED gate)
-- [ ] 03-02-PLAN.md — Implement migration + full type chain + repository + facade (TDD GREEN gate)
+- [x] 03-01-PLAN.md — Write failing test scaffolds for repository SELECT/UPDATE and type mapper behavior (TDD RED gate)
+- [x] 03-02-PLAN.md — Implement migration + full type chain + repository + facade (TDD GREEN gate)
 
 ### Phase 4: Cache Extension & Provider Injection
 **Goal**: OpenRouter requests use extended cache breakpoints with correct TTL per block type, and the proxy injects the account's stored provider preference when no provider override is already present in the request
