@@ -70,6 +70,12 @@ See: `.planning/PROJECT.md` (updated 2026-05-04)
 - OpenRouter `cache_control` ephemeral injection (openrouter/provider.ts)
 - Biome formatter applied to test files
 
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260505-001 | Fix SOP issues from v1.0 audit | 2026-05-05 | 134f689 | [260505-001-fix-sop-issues](./quick/260505-001-fix-sop-issues/) |
+
 ## Session Continuity
 
 **To resume:** Run `/gsd-plan-phase 1` to create an executable plan for Phase 1.
