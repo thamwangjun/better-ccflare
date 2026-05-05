@@ -24,7 +24,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				model_fallbacks,
 				billing_type,
 				pause_reason,
-				refresh_token_issued_at
+				refresh_token_issued_at,
+				openrouter_provider_preference
 			FROM accounts
 			ORDER BY priority DESC
 		`);
@@ -50,7 +51,8 @@ export class AccountRepository extends BaseRepository<Account> {
 				model_fallbacks,
 				billing_type,
 				pause_reason,
-				refresh_token_issued_at
+				refresh_token_issued_at,
+				openrouter_provider_preference
 			FROM accounts
 			WHERE id = ?
 		`,
@@ -208,6 +210,17 @@ export class AccountRepository extends BaseRepository<Account> {
 			billingType,
 			accountId,
 		]);
+	}
+
+	// FORK PATCH: update openrouter_provider_preference for per-account provider.order injection
+	async setOpenrouterProviderPreference(
+		accountId: string,
+		preference: string | null,
+	): Promise<void> {
+		await this.run(
+			`UPDATE accounts SET openrouter_provider_preference = ? WHERE id = ?`,
+			[preference, accountId],
+		);
 	}
 
 	/**

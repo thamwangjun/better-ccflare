@@ -488,7 +488,9 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		}
 
 		// FORK PATCH: add openrouter_provider_preference for per-account provider.order injection
-		if (!initialAccountsColumnNames.includes("openrouter_provider_preference")) {
+		if (
+			!initialAccountsColumnNames.includes("openrouter_provider_preference")
+		) {
 			db.prepare(
 				"ALTER TABLE accounts ADD COLUMN openrouter_provider_preference TEXT DEFAULT NULL",
 			).run();
