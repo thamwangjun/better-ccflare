@@ -1,290 +1,132 @@
-# OpenRouter — Caching & Provider Selection
+# Stack Research — v1.1
 
-**Researched:** 2026-05-04
-**Overall confidence:** MEDIUM-HIGH (official docs verified via WebFetch; some field-level details cross-checked against open-source issue trackers)
+**Project:** better-ccflare personal fork
+**Researched:** 2026-05-05
+**Mode:** Ecosystem / targeted stack additions
 
 ---
 
-## Prompt Caching
+## Summary
 
-### How OpenRouter exposes caching
+All three v1.1 features (4th cache breakpoint, 1-hour TTL, per-account provider preference) require **zero new npm dependencies**. Every capability needed already exists in the codebase or in the OpenRouter/Anthropic API surface. Work is purely TypeScript logic changes to the OpenRouter provider and the existing SQLite schema extension pattern the codebase already follows.
 
-OpenRouter has two distinct caching features. Do not confuse them:
+---
 
-1. **Prompt caching** — provider-side token reuse. Saves on billing by not re-processing repeated prompt prefixes. The focus of this document.
-2. **Response caching** — OpenRouter-level exact-match deduplication. A fully identical request returns the cached response for free (all usage counters zeroed). Orthogonal to prompt caching.
+## New Dependencies
 
-### Which providers support prompt caching
+**None required.** Rationale for each feature:
 
-| Provider | Type | Configuration required |
-|---|---|---|
-| Anthropic (direct) | Explicit via `cache_control` | Yes — `cache_control` blocks on content |
-| OpenAI | Automatic (1024-token minimum) | None |
-| Google Gemini 2.5 | Implicit/automatic | None (explicit breakpoints supported) |
-| DeepSeek | Automatic | None |
-| Grok (xAI) | Automatic | None |
-| Groq | Automatic (Kimi K2 only) | None |
-| Moonshot AI | Automatic | None |
-| Anthropic via Bedrock/Vertex | Not supported | N/A — excluded by OpenRouter when top-level `cache_control` is set |
-
-### Request shapes
-
-**Automatic caching (top-level field — Anthropic only, direct routing):**
-```json
-{
-  "model": "anthropic/claude-sonnet-4-5",
-  "cache_control": { "type": "ephemeral" },
-  "messages": [...]
-}
-```
-This is what `OpenRouterProvider.transformRequestBody` currently injects. OpenRouter advances the cache breakpoint to the last cacheable block automatically. CONSTRAINT: when this field is present, OpenRouter excludes Bedrock and Vertex backends, routing only to direct Anthropic.
-
-**Explicit breakpoints (fine-grained, Anthropic + Gemini):**
-```json
-{
-  "model": "anthropic/claude-sonnet-4-5",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        {
-          "type": "text",
-          "text": "<large document>",
-          "cache_control": { "type": "ephemeral" }
-        }
-      ]
-    }
-  ]
-}
-```
-Anthropic limits to 4 explicit breakpoints per request. Gemini has no limit.
-
-**TTL extension (Anthropic only):**
-```json
-"cache_control": { "type": "ephemeral", "ttl": "1h" }
-```
-Supported TTL values: `5m` (default) and `1h`. 1-hour TTL costs 2x base input price to write but avoids repeated writes in long sessions.
-
-### Response usage structure (OpenRouter format)
-
-OpenRouter normalises cache token reporting into its own field names, which differ from Anthropic's native API. The full usage object returned by OpenRouter:
-
-```json
-{
-  "usage": {
-    "prompt_tokens": 10339,
-    "completion_tokens": 60,
-    "total_tokens": 10399,
-    "prompt_tokens_details": {
-      "cached_tokens": 10318,
-      "cache_write_tokens": 0,
-      "audio_tokens": 0
-    },
-    "completion_tokens_details": {
-      "reasoning_tokens": 0
-    },
-    "cost": 0.00041356,
-    "cost_details": {
-      "upstream_inference_cost": 0.00041356
-    }
-  }
-}
-```
-
-**Field semantics:**
-
-| OpenRouter field | Meaning | Anthropic native equivalent |
-|---|---|---|
-| `usage.prompt_tokens` | Total prompt tokens including all cache variants | sum of `input_tokens` + `cache_read_input_tokens` + `cache_creation_input_tokens` |
-| `usage.prompt_tokens_details.cached_tokens` | Tokens read from cache (cache hit) | `cache_read_input_tokens` |
-| `usage.prompt_tokens_details.cache_write_tokens` | Tokens written to cache (cache miss / first write) | `cache_creation_input_tokens` |
-| `usage.completion_tokens` | Output tokens | `output_tokens` |
-
-**There is no `cache_read_input_tokens` or `cache_creation_input_tokens` at the top level of the OpenRouter `usage` object.** These field names belong to Anthropic's native API format. OpenRouter translates them into `prompt_tokens_details.cached_tokens` and `prompt_tokens_details.cache_write_tokens`.
-
-### Current codebase gap
-
-`extractUsageFromJson` in `post-processor.worker.ts` only handles Anthropic-native field names (`input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`). OpenRouter non-streaming responses use `prompt_tokens`, `completion_tokens`, and `prompt_tokens_details`. When a non-streaming OpenRouter response comes through the `handleEnd` path, `state.usage.model` is checked first — if streaming already populated the model, this code is skipped. But for non-streaming OpenRouter requests, none of the cache fields will be populated.
-
-The streaming path in `post-processor.worker.ts` already handles `prompt_tokens_details` (lines 260–276) for the OpenAI-format streaming chunks that OpenRouter emits. This path is correct.
-
-The `base-anthropic-compatible.ts` `extractUsageInfo` path (used by `OpenRouterProvider` which inherits from `AnthropicCompatibleProvider`) expects `json.usage.input_tokens` and `json.usage.cache_creation_input_tokens` — neither of which exists in OpenRouter responses. This means the base provider's non-streaming usage extraction returns zeros for cache tokens when handling OpenRouter.
-
-### Sticky routing
-
-OpenRouter automatically routes subsequent requests for the same model to the same provider backend after a cached request, to keep the cache warm. This is tracked per-account, per-model, per-conversation (identified by hashing the first system message and first non-system message). Manual `provider.order` overrides sticky routing — if you pin a provider explicitly, sticky routing is bypassed.
-
-### Minimum token thresholds for caching to activate
-
-| Provider | Minimum |
+| Feature | Why no new dep needed |
 |---|---|
-| Anthropic Claude 3 | 2048 tokens |
-| Anthropic Claude 3.5+ | 1024 tokens (some models require 4096) |
-| OpenAI | 1024 tokens |
-| Google Gemini 2.5 | 4096 tokens |
+| 4th cache breakpoint | Pure logic change in `transformRequestBody` — add one more `if` block targeting high-token user messages |
+| 1-hour TTL cache blocks | API format change: add `"ttl": "1h"` to existing `{ type: "ephemeral" }` objects — no library needed |
+| Per-account provider preference | Store JSON string in new `openrouter_provider_preference` column (same pattern as `model_mappings`); inject into request body in `transformRequestBody` |
 
 ---
 
-## Provider Selection
+## Integration Points
 
-### The `provider` object
+### Feature 1: 4th cache breakpoint (high-token user message)
 
-Sent at the top level of the request body alongside `model` and `messages`:
+**File:** `packages/providers/src/providers/openrouter/provider.ts`
+**Function:** `transformRequestBody` (existing FORK PATCH block, lines 40–117)
 
+The current implementation handles 3 breakpoints (tools, system, last assistant turn). The 4th breakpoint targets the last user message in `messages[]`. Anthropic's documented ordering for cache placement is:
+
+1. tools (already done — breakpoint 1)
+2. system (already done — breakpoint 2)
+3. last assistant turn (already done — breakpoint 3)
+4. last user message (new — breakpoint 4)
+
+Implementation: find the last message with `role === "user"` in `body.messages`, apply `cache_control` to its last content block using the same pattern as breakpoint 3 (assistant turn). If content is a string, convert to array form first.
+
+**Constraint verified (HIGH confidence — official Anthropic docs):** 4 is the hard limit. If 4 explicit block-level breakpoints exist and automatic caching is also requested, the API returns a 400. The current 3-breakpoint implementation leaves the 4th slot open; adding a 4th explicit breakpoint is safe. The codebase never sends a top-level `cache_control` field.
+
+**Test file:** `packages/providers/src/providers/openrouter/__tests__/provider.test.ts` — add test cases to the existing `describe` block following the existing `makeRequest` factory pattern.
+
+---
+
+### Feature 2: 1-hour TTL cache blocks
+
+**File:** `packages/providers/src/providers/openrouter/provider.ts`
+**Function:** `transformRequestBody`
+
+**API format (HIGH confidence — official OpenRouter docs, cross-verified with Anthropic docs):**
+- 5-minute default (current): `{ "type": "ephemeral" }`
+- 1-hour extended: `{ "type": "ephemeral", "ttl": "1h" }`
+
+The `ttl` field is additive to the existing object — same `type`, new `ttl` key. No structural change to the injection pattern.
+
+**How the provider knows which TTL to use:** Store a per-account setting in the DB using a new column `openrouter_cache_ttl TEXT DEFAULT NULL`. Values: `null` (default, means 5-min ephemeral), `"1h"` (extended). This is consistent with the project's per-account field pattern and is user-controllable without redeployment.
+
+**Schema change:** Add column `openrouter_cache_ttl TEXT DEFAULT NULL` to `accounts` table in `packages/database/src/migrations.ts` (`runMigrations` transaction block, idempotent `ALTER TABLE` pattern — see existing examples at lines 337–471).
+
+**Type changes required:**
+
+| File | Change |
+|---|---|
+| `packages/types/src/account.ts` — `AccountRow` | Add `openrouter_cache_ttl?: string \| null` |
+| `packages/types/src/account.ts` — `Account` | Add `openrouter_cache_ttl: string \| null` |
+| `packages/types/src/account.ts` — `toAccount()` | Map `row.openrouter_cache_ttl \|\| null` |
+| `packages/types/src/account.ts` — `AccountResponse` | Add `openrouterCacheTtl?: string \| null` |
+| `packages/types/src/account.ts` — `toAccountResponse()` | Pass `account.openrouter_cache_ttl` through |
+
+---
+
+### Feature 3: Per-account OpenRouter provider preference
+
+**API format (HIGH confidence — official OpenRouter provider routing docs):**
 ```json
 {
-  "model": "anthropic/claude-sonnet-4-5",
   "provider": {
-    "order": ["Anthropic", "Together"],
-    "allow_fallbacks": true,
-    "only": ["Anthropic"],
-    "ignore": ["Together"],
-    "require_parameters": false,
-    "data_collection": "allow",
-    "zdr": false,
-    "sort": "throughput",
-    "quantizations": ["fp8", "fp16"],
-    "preferred_min_throughput": 100,
-    "preferred_max_latency": 2,
-    "max_price": {
-      "prompt": 1,
-      "completion": 2,
-      "request": 0.50,
-      "image": 0.10
-    }
-  },
-  "messages": [...]
-}
-```
-
-### All `provider` fields
-
-| Field | Type | Default | Hard constraint? | Purpose |
-|---|---|---|---|---|
-| `order` | `string[]` | — | No (fallbacks still apply) | Ordered list of provider slugs to attempt first |
-| `allow_fallbacks` | `boolean` | `true` | Yes when `false` | Whether to try other providers if preferred fails |
-| `only` | `string[]` | — | Yes — hard allow-list | Restrict routing exclusively to these providers |
-| `ignore` | `string[]` | — | Yes — hard deny-list | Never route to these providers |
-| `require_parameters` | `boolean` | `false` | Yes | Exclude providers that silently ignore unknown params |
-| `data_collection` | `"allow" \| "deny"` | `"allow"` | Yes | `"deny"` = only providers with zero data retention |
-| `zdr` | `boolean` | — | Yes | Enforce Zero Data Retention endpoints only |
-| `sort` | `string \| object` | — | No (deprioritises) | Optimise for `"price"`, `"throughput"`, or `"latency"` |
-| `quantizations` | `string[]` | — | Yes | Filter by quantization: `int4 \| int8 \| fp4 \| fp6 \| fp8 \| fp16 \| bf16 \| fp32 \| unknown` |
-| `preferred_min_throughput` | `number \| object` | — | No (deprioritises) | Deprioritise low-throughput endpoints |
-| `preferred_max_latency` | `number \| object` | — | No (deprioritises) | Deprioritise high-latency endpoints |
-| `max_price` | `object` | — | Yes — blocks execution | Refuse to route if all providers exceed this price |
-| `enforce_distillable_text` | `boolean` | — | Yes | Only route to distillable-text-enabled providers |
-
-### `order` vs `only` — key distinction
-
-These are not the same:
-
-- `order: ["Anthropic", "Together"]` — try Anthropic first, then Together, then any other provider (unless `allow_fallbacks: false`)
-- `only: ["Anthropic"]` — hard allow-list; only Anthropic is ever considered, period
-
-To pin a single provider with no fallbacks: use `only: ["Anthropic"]` and `allow_fallbacks: false`. Using `order` alone still allows OpenRouter to fall through to unlisted providers.
-
-### Provider slug format
-
-Base slugs (e.g. `"Anthropic"`, `"Together"`) match all variants and regions. Full slugs (e.g. `"google-vertex/us-east5"`) target a specific endpoint. The same format applies to `order`, `only`, and `ignore`.
-
-### `sort` parameter
-
-Simple string form:
-```json
-{ "sort": "price" }
-```
-
-Advanced object form with cross-model partitioning:
-```json
-{
-  "sort": {
-    "by": "throughput",
-    "partition": "none"
+    "order": ["anthropic", "openai"],
+    "allow_fallbacks": true
   }
 }
 ```
-`partition: "none"` disables per-model grouping, enabling selection across multiple fallback models by global performance. Setting `sort` disables OpenRouter's default load balancing.
 
-### Performance threshold fields
+The `provider` field goes at the top level of the request body alongside `model` and `messages`. `provider.order` is an array of provider slug strings. `allow_fallbacks: true` is the default and must always be set (project constraint: never use `provider.only`).
 
-`preferred_min_throughput` and `preferred_max_latency` accept either a scalar (applied at p50) or a percentile object:
-```json
-{
-  "preferred_min_throughput": { "p50": 100, "p90": 50 },
-  "preferred_max_latency": { "p50": 1.0, "p90": 3.0 }
-}
-```
-IMPORTANT: these deprioritise but never exclude. Requests always execute even if no provider meets the threshold.
+**Storage:** Follow the `model_mappings` pattern exactly — store as a JSON string (`["anthropic","openai"]`) in a new `openrouter_provider_preference TEXT DEFAULT NULL` column. Parse it in `transformRequestBody` and inject.
 
-### Model shortcut suffixes
+**ENV var path for global default:** A simple global `OPENROUTER_PROVIDER_ORDER` env var (comma-separated slugs, e.g. `anthropic,openai`) read in `transformRequestBody` as a fallback when no per-account setting is present. This requires no schema change for the global case. The per-account DB setting takes precedence over the global ENV var.
 
-- `model:nitro` — equivalent to `provider: { sort: "throughput" }`
-- `model:floor` — equivalent to `provider: { sort: "price" }`
+**Files to change:**
 
-### Default routing behaviour (no `provider` object)
-
-1. Prioritise providers with no recent outages
-2. Among stable providers, weight by inverse-square-of-price
-3. Use remaining providers as fallbacks
-
-### Interaction with model fallbacks (`models` array)
-
-The `models` array and `provider` object are orthogonal. `models` is a priority-ordered list of model IDs for model-level fallback:
-```json
-{
-  "models": ["anthropic/claude-sonnet-4-5", "anthropic/claude-haiku-3-5"],
-  "provider": { "only": ["Anthropic"] }
-}
-```
-The `model` field in the response indicates which model was ultimately used.
+| File | Change |
+|---|---|
+| `packages/database/src/migrations.ts` | Add `ALTER TABLE accounts ADD COLUMN openrouter_provider_preference TEXT` in idempotent migration block; add `ALTER TABLE accounts ADD COLUMN openrouter_cache_ttl TEXT` in same block |
+| `packages/types/src/account.ts` — `AccountRow` | Add `openrouter_provider_preference?: string \| null` |
+| `packages/types/src/account.ts` — `Account` | Add `openrouter_provider_preference: string \| null` |
+| `packages/types/src/account.ts` — `toAccount()` | Map `row.openrouter_provider_preference \|\| null` |
+| `packages/types/src/account.ts` — `AccountResponse` | Add `openrouterProviderPreference?: string[] \| null` (parsed array form for dashboard) |
+| `packages/types/src/account.ts` — `toAccountResponse()` | Parse JSON, pass through array |
+| `packages/providers/src/providers/openrouter/provider.ts` — `transformRequestBody` | After cache injection: if `account.openrouter_provider_preference` set, parse JSON and inject `body.provider = { order: parsed, allow_fallbacks: true }`; fall back to `OPENROUTER_PROVIDER_ORDER` env var if no per-account setting |
+| `packages/http-api/src/handlers/accounts.ts` | Add PATCH handler to update the new column (follow the `model_mappings` update pattern at ~line 2128) |
+| `packages/database/src/repositories/account.repository.ts` | Include both new columns in SELECT and UPDATE queries |
+| `packages/dashboard-web/src/components/accounts/` | New `AccountOpenRouterProviderDialog.tsx` component modeled on `AccountModelMappingsDialog.tsx` — text input for comma-separated provider slugs, saved as JSON array |
 
 ---
 
-## Gotchas & Constraints
+## What NOT to Add
 
-### Caching
+**Do not add a caching middleware layer.** The 1-hour TTL is a field value change in the request body, not a response caching concern. No in-process cache or Redis needed.
 
-1. **Top-level `cache_control` locks you to direct Anthropic.** The current `transformRequestBody` injection of `cache_control: { type: "ephemeral" }` prevents routing to Bedrock and Vertex. This is intentional for caching but unintentional if you ever want Bedrock/Vertex routing for a non-Anthropic model while keeping the same provider.
+**Do not use `provider.only`.** Project constraint: always use `provider.order` with `allow_fallbacks: true`. Using `only` eliminates fallback routing and would cause hard failures if the preferred provider is rate-limited or down.
 
-2. **OpenRouter usage fields are not Anthropic-native fields.** `prompt_tokens_details.cached_tokens` is the cache read count. `prompt_tokens_details.cache_write_tokens` is the cache write count. There is no `cache_read_input_tokens` or `cache_creation_input_tokens` at the top level of OpenRouter responses. Code that assumes Anthropic field names will silently read zeros from OpenRouter responses.
+**Do not create a new provider subclass for OpenRouter-with-preferences.** Extend `OpenRouterProvider.transformRequestBody` directly. The conditional logic is localized and isolated from upstream code (upstream does not touch the FORK PATCH injection blocks).
 
-3. **`cache_write_tokens` was added in January 2026.** Before this, OpenRouter did not return cache write tokens at all; they had to be derived algebraically. The `include_usage: true` parameter is now deprecated — full usage is always returned.
+**Do not abstract a "cache TTL manager" class.** The TTL is one field on two to four objects per request. Over-engineering this adds indirection without benefit.
 
-4. **Non-streaming OpenRouter responses through `extractUsageFromJson` will miss all cache tokens** because that function only looks at `input_tokens` / `cache_read_input_tokens` / `cache_creation_input_tokens`, none of which exist in OpenRouter's response format. The streaming path is already handled correctly.
+**Do not reuse the `model_mappings` column to store provider preference.** `model_mappings` is used by multiple providers and has its own parsing semantics in the dashboard. A dedicated `openrouter_provider_preference` column is cleaner and prevents future confusion.
 
-5. **Sticky routing is per-model, per-conversation.** If your first system message changes between requests, sticky routing picks a different provider and you lose your cache. Keep the system prompt stable.
-
-6. **4 explicit breakpoint limit on Anthropic.** The automatic top-level `cache_control` injection counts as one of them.
-
-7. **Minimum token thresholds are model-specific.** If a prompt is under the minimum, caching is silently skipped with no error. The `cache_write_tokens` field will be 0.
-
-### Provider routing
-
-1. **`order` alone does not prevent fallback.** You must also set `allow_fallbacks: false` if you want strict provider pinning.
-
-2. **`sort` or `order` disables load balancing.** OpenRouter's default weighted routing across stable providers is turned off.
-
-3. **`max_price` is the only performance field that can block execution.** All throughput/latency threshold fields merely deprioritise; the request will always go somewhere.
-
-4. **Account-level privacy settings merge with per-request `data_collection`.** The more restrictive wins — if your account is set to deny data collection, a per-request `"allow"` has no effect.
-
-5. **`require_parameters: true` has a broad exclusion effect.** Many providers silently drop unknown fields. This flag narrows the pool significantly, potentially leaving few or no viable providers for requests with unusual parameters.
-
-6. **Anthropic beta features require the `x-anthropic-beta` header.** Without it, OpenRouter may strip certain fields (e.g. `strict` in structured outputs). Multiple features: comma-separated. This header must be forwarded from the client; the proxy should not strip it.
+**Do not add a `provider.quantizations` or `provider.sort` field.** OpenRouter supports these in the same `provider` object but they are out of scope for v1.1 and would require additional UI work.
 
 ---
 
-## Confidence
+## Sources
 
-| Claim | Confidence | Source |
-|---|---|---|
-| OpenRouter usage field names (`prompt_tokens_details.cached_tokens`, `cache_write_tokens`) | HIGH | Official OpenRouter docs (WebFetch confirmed) + usage accounting docs |
-| `cache_write_tokens` added January 2026 | MEDIUM | WebSearch + GitHub issue #18440 cross-reference; no exact date in official docs |
-| Provider `order` vs `only` distinction | HIGH | Official provider routing docs (WebFetch confirmed) |
-| Full `provider` object field list | HIGH | Official provider routing docs (WebFetch confirmed) |
-| `extractUsageFromJson` gap for non-streaming OpenRouter | HIGH | Direct code reading of `post-processor.worker.ts` |
-| Top-level `cache_control` excludes Bedrock/Vertex | HIGH | Official caching docs explicitly stated |
-| Anthropic breakpoint limit of 4 | HIGH | Official caching docs |
-| Sticky routing mechanism | MEDIUM | Official caching docs (stated) but exact hash inputs verified only from docs prose, not code |
-| `cache_write_tokens` release date range (Dec 2025 – Jan 2026) | LOW | Single blog post and one GitHub issue; no official changelog URL found |
+- OpenRouter prompt caching docs (TTL format, breakpoint limit): https://openrouter.ai/docs/guides/best-practices/prompt-caching — HIGH confidence (verified via WebFetch 2026-05-05)
+- OpenRouter provider routing docs (`provider.order` format): https://openrouter.ai/docs/guides/routing/provider-selection — HIGH confidence (verified via WebFetch 2026-05-05)
+- Anthropic prompt caching docs (4-breakpoint hard limit, TTL values): https://platform.claude.com/docs/en/build-with-claude/prompt-caching — HIGH confidence (verified via WebFetch 2026-05-05)
+- Codebase direct inspection: `packages/types/src/account.ts`, `packages/database/src/migrations.ts`, `packages/providers/src/providers/openrouter/provider.ts`, `packages/http-api/src/handlers/accounts.ts`

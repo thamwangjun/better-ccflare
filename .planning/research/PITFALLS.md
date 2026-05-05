@@ -1,260 +1,220 @@
-# Pitfalls
+# Pitfalls Research — v1.1
 
-**Project:** better-ccflare — OpenRouter integration, provider routing, fork maintenance
-**Researched:** 2026-05-04
-**Overall confidence:** HIGH (verified against codebase state + official docs)
-
----
-
-## Prompt Caching Pitfalls
-
-### 1. Top-level `cache_control` only works with Anthropic-direct, not all OpenRouter routes
-
-**What goes wrong:** The current implementation injects `cache_control: { type: "ephemeral" }` at the **top level of the request body** in `OpenRouterProvider.transformRequestBody`. OpenRouter's own documentation explicitly states: "Top-level `cache_control` is only supported when requests are routed to the Anthropic provider directly." When OpenRouter routes to Bedrock or Vertex, the top-level field is silently ignored and no cache is established.
-
-**Evidence:** HIGH confidence — verified against official OpenRouter prompt caching docs and confirmed by community issue [OpenRouterTeam/ai-sdk-provider#35](https://github.com/OpenRouterTeam/ai-sdk-provider/issues/35) where only system prompt caching worked even after workarounds.
-
-**Detection:** Cache read tokens (`cached_tokens` in `prompt_tokens_details`) remain zero despite repeated identical prompts. Billing does not show cache discounts.
-
-**Prevention:** Use per-block `cache_control` placed inside specific message `content` array items, not at the request top level. This works across all provider routes, not just Anthropic-direct. For Claude models specifically, this means injecting `cache_control` into the last system message or a high-token user message block, not the root body object.
+**Project:** better-ccflare (personal fork) — v1.1 milestone
+**Researched:** 2026-05-05
+**Scope:** Pitfalls specific to adding three features to the existing proxy:
+1. Extended cache breakpoints (4th breakpoint: high-token user message)
+2. 1-hour TTL cache blocks (replacing ephemeral-only)
+3. Per-account OpenRouter provider preference (ENV var + Dashboard UI)
 
 ---
 
-### 2. The `usage` object structure differs between Anthropic native and OpenRouter
+## Summary
 
-**What goes wrong:** Anthropic native responses use `cache_creation_input_tokens` and `cache_read_input_tokens` at the top level of `usage`. OpenRouter (when routing through OpenAI-compatible paths) wraps these inside `usage.prompt_tokens_details` as `cache_write_tokens` and `cached_tokens` — different field names, nested differently.
-
-**Evidence:** HIGH confidence — verified directly in the codebase. The local fork patch in `packages/providers/src/providers/openai/provider.ts` adds exactly this fallback:
-```
-promptTokensDetails?.cache_creation_input_tokens ||
-promptTokensDetails?.cache_write_tokens ||
-0
-```
-The upstream (`tombii/better-ccflare`) does not have this. The real-world consequence is documented in [anomalyco/opencode#18440](https://github.com/anomalyco/opencode/issues/18440): a user paid $20 while the tracker showed $4 — a 5x underestimation — because cache write tokens were not extracted from the OpenRouter response shape.
-
-**Detection:** Cost tracking diverges from actual OpenRouter billing after the first cache-write request. Cache write events show $0 in stats even when a new cache entry was established.
-
-**Prevention:** Always handle both field shapes. Check `usage.cache_creation_input_tokens` (Anthropic native) AND `usage.prompt_tokens_details?.cache_write_tokens` (OpenRouter/OpenAI-compatible path). This fork already does this; it must not be lost in upstream merges.
+The highest-risk area in v1.1 is **breakpoint count management**: injecting a 4th cache breakpoint without knowing how many were already present in the incoming request will silently exceed Anthropic's hard 4-breakpoint limit, causing the cache to be applied to the wrong blocks or ignored entirely. The second major risk is **scope creep in the TTL implementation**: the proxy already has `injectSystemCacheTtl` applied globally in `proxy.ts`, so any new block-level TTL injection in the OpenRouter provider layer will interact with this — potentially doubling or conflicting with TTL values. The per-account provider preference feature carries the lowest technical risk but the highest **upstream merge surface risk**: every layer it touches (DB schema, Account type, HTTP API handler, AccountResponse type, Dashboard components) is shared with upstream, and changes to any of them create merge conflicts.
 
 ---
 
-### 3. Minimum token thresholds silently prevent cache activation
+## Pitfall 1: Exceeding the 4-breakpoint Hard Limit
 
-**What goes wrong:** Caching silently does nothing if the cacheable content does not meet the model's minimum token threshold. The thresholds vary:
+**Risk:** Anthropic's cache API enforces a hard limit of 4 `cache_control` breakpoints per request. The existing v1.0 implementation injects 3 unconditionally (tools, system, last assistant turn). Adding the 4th breakpoint (high-token user message) without checking how many breakpoints the *incoming request already contains* can push the total above 4. If the Claude Code client already placed a `cache_control` on the user message, the proxy adds a duplicate, exceeding the limit. OpenRouter passes this to Anthropic which returns a 400 error. The error is silent in the proxy logs because `transformRequestBody` catches and swallows all exceptions (line 112 of `provider.ts`).
 
-| Claude model | Min tokens to cache |
-|---|---|
-| Opus 4.7 / 4.6 / 4.5 | 4,096 |
-| Sonnet 4.6 | 2,048 |
-| Sonnet 4.5 / Opus 4.1 / Opus 4 / Sonnet 4 / Sonnet 3.7 | 1,024 |
-| Haiku 4.5 | 4,096 |
-| Haiku 3.5 | 2,048 |
-
-**Evidence:** HIGH confidence — official OpenRouter prompt caching docs, cross-referenced with Anthropic docs.
-
-**Detection:** `cache_write_tokens` is always 0 even on first requests with explicit `cache_control` breakpoints. The system prompt or content block being marked is under the threshold.
-
-**Prevention:** Validate that the content targeted by a cache breakpoint is above the threshold for the target model before expecting caching to activate. Short system prompts on Haiku 4.5 (under 4,096 tokens) will never cache.
-
----
-
-### 4. The 5-minute TTL resets silently; sticky routing does not survive provider failover
-
-**What goes wrong:** OpenRouter's sticky routing keeps cache warm by routing subsequent requests to the same upstream provider. The default TTL is approximately 5 minutes. If the sticky provider becomes unavailable and OpenRouter fails over to another provider, the new provider has no knowledge of the cache — a full cache miss plus a write charge occurs. This is invisible to the caller: the request succeeds with HTTP 200, but `cache_write_tokens` spikes in the response.
-
-The `prompt_cache_ttl` top-level parameter is silently ignored by OpenRouter. The correct mechanism for a 1-hour TTL is `cache_control: { type: "ephemeral", ttl: "1h" }` placed on the content block — but this costs more per write (roughly 2x write price).
-
-**Evidence:** MEDIUM confidence — OpenRouter prompt caching docs + [opencode#16848](https://github.com/anomalyco/opencode/issues/16848) which documents the silently-ignored `prompt_cache_ttl` parameter and the correct alternative.
-
-**Detection:** Periodic spikes in `cache_write_tokens` on otherwise identical requests after a quiet period. Correlates with 5-minute idle gaps.
-
-**Prevention:** For long-running sessions where cache misses are expensive, use `ttl: "1h"` on the content block. Accept the higher write cost in exchange for resilience against sticky routing resets.
-
----
-
-### 5. Model/provider combinations that do not support caching at all
-
-**What goes wrong:** Injecting `cache_control` for non-Anthropic models routed through OpenRouter (e.g., `openai/gpt-4o`, `google/gemini-2.5-pro`, `deepseek/deepseek-chat`) is either silently ignored or causes a 400 error depending on the model's provider. Only the models listed in the official support table will respond with cache metrics. For providers with automatic caching (OpenAI, DeepSeek, Gemini 2.5, Groq), sending explicit `cache_control` is unnecessary — they cache automatically.
-
-**Evidence:** HIGH confidence — OpenRouter prompt caching docs.
-
-**Prevention:** Gate `cache_control` injection on model prefix. Only inject for `anthropic/*` model slugs. For others, let the provider handle caching automatically and still parse `prompt_tokens_details` for cache metrics.
-
----
-
-## Provider Selection Pitfalls
-
-### 1. `provider.only` with a single provider eliminates all fallback
-
-**What goes wrong:** When `provider: { only: ["Anthropic"] }` is set, OpenRouter will not route to any other provider if Anthropic is unavailable, rate-limited, or refuses the request. The request fails entirely rather than degrading gracefully. This is documented explicitly: "Only allowing some providers may significantly reduce fallback options."
-
-**Evidence:** HIGH confidence — official OpenRouter provider routing docs.
-
-**Detection:** Requests fail with 4xx/5xx rather than succeeding with higher latency during Anthropic outages.
-
-**Prevention:** Prefer `provider.order` over `provider.only`. `order` sets preference without eliminating fallback. Only use `only` when routing to a specific provider is a hard requirement (e.g., compliance/data residency).
-
----
-
-### 2. Mid-stream provider failure returns HTTP 200 with an SSE error event
-
-**What goes wrong:** If a provider fails after streaming has begun, the HTTP status code is already 200 (headers were sent). The error arrives as an SSE event with `finish_reason: "error"` inside the `choices` array, not as an HTTP error code. Callers that only check HTTP status will silently succeed on a broken stream.
-
-**Evidence:** HIGH confidence — official OpenRouter API error handling docs, cross-confirmed by LiteLLM issue [#19077](https://github.com/BerriAI/litellm/issues/19077) (disable_fallbacks ignored for mid-stream fallback).
-
-**Detection:** Client receives a `choices[0].finish_reason === "error"` in a streaming chunk rather than a complete response.
-
-**Prevention:** The proxy's SSE parsing must check `finish_reason` in every streaming chunk, not just the final one. An `error` finish_reason should be surfaced as a connection error to the downstream caller rather than silently completing.
-
----
-
-### 3. `allow_fallbacks: false` behavior during streaming is inconsistent
-
-**What goes wrong:** When `allow_fallbacks: false` is set alongside streaming, mid-stream errors have been observed to still trigger internal fallback attempts in some gateway implementations, ignoring the disable flag. The request may succeed via a fallback provider even though the caller specified no fallbacks — breaking the guarantee that only the pinned provider was used.
-
-**Evidence:** MEDIUM confidence — documented as a bug in LiteLLM [#19077](https://github.com/BerriAI/litellm/issues/19077) (not OpenRouter itself, but the same gateway pattern). OpenRouter's own behavior here is not explicitly documented.
-
-**Prevention:** Treat `allow_fallbacks: false` as best-effort for streaming, not a hard guarantee. Verify via response metadata (`x-openrouter-provider` header if available) that the intended provider served the request.
-
----
-
-### 4. Provider routing does not interact with sticky caching routing
-
-**What goes wrong:** When you specify `provider.order`, OpenRouter respects your ordering and does **not** apply its own sticky routing for cache optimization. This means provider pinning and cache efficiency are mutually exclusive with the default sticky routing mechanism. You get routing control or cache optimization, not both.
-
-**Evidence:** MEDIUM confidence — OpenRouter prompt caching docs state: "sticky routing is not used when you specify a manual provider order via provider.order."
-
-**Prevention:** If cache hit rate matters, do not use `provider.order`. Let OpenRouter manage routing. If provider pinning is required, account for higher write token costs in the pricing model.
-
----
-
-### 5. Model availability changes silently when a provider is pinned
-
-**What goes wrong:** A model may be available through OpenRouter's load-balanced routing but unavailable from a specific pinned provider. The request fails without a clear error explaining that the model exists but not on the requested provider.
-
-**Evidence:** MEDIUM confidence — inferred from OpenRouter FAQ and [openclaw#10869](https://github.com/openclaw/openclaw/issues/10869) which documents provider pinning availability gaps.
-
-**Detection:** 404 or "model not found" errors on a model that works without pinning.
-
-**Prevention:** Test model availability on specific providers explicitly before deploying with provider pins. Document which models were verified on which providers and at what date, since providers add/remove models without notice.
-
----
-
-## Fork Maintenance Pitfalls
-
-### 1. The `openai/provider.ts` patch touches a shared, high-churn file
-
-**What goes wrong:** This fork has a patch in `packages/providers/src/providers/openai/provider.ts` that adds `cache_write_tokens` extraction from `prompt_tokens_details`. This file is a shared base provider that upstream (`tombii/better-ccflare`) actively refactors. The diff already shows upstream removed `thinkingBlockClosed`, renamed `toolCallBlockIndices` to `toolCallAccumulators`, and changed `endTurnBlockIndex` handling in `packages/openai-formats/src/stream.ts`. These are exactly the kinds of refactors that will conflict with the local patch.
-
-**Evidence:** HIGH confidence — confirmed by running `git diff upstream/main HEAD` against actual repo state. The fork is currently 5 commits ahead of upstream on `thamw-main`, with 63 files diverged.
-
-**Detection:** `git diff --name-only upstream/main HEAD | grep openai` shows the files. Run this before every upstream merge.
+**Warning signs:**
+- Requests from Claude Code sessions start returning 400 errors intermittently, but only on long sessions where the client begins adding its own cache hints
+- `cache_write_tokens` in the response drops to 0 and a `400 validation_error` appears in the error event stream
+- The 400 is swallowed by the `catch` block, so the proxy falls back to the unmodified request, masking the root cause
 
 **Prevention:**
-1. Keep the patch minimal — the existing patch adds only 3 lines to the `cache_creation_input_tokens` extraction block. This is a good footprint.
-2. Write the merge check as a CI step: `git merge-tree $(git merge-base HEAD upstream/main) upstream/main HEAD -- packages/providers/src/providers/openai/provider.ts` — a non-empty result indicates a merge conflict before it happens.
-3. Keep a comment in the patched block: `// FORK PATCH: OpenRouter uses prompt_tokens_details.cache_write_tokens` so reviewers understand why the line exists and do not remove it as "dead code" during an upstream merge.
+- Before injecting the 4th breakpoint, count the total existing `cache_control` occurrences across `body.tools`, `body.system`, and all `body.messages[*].content[*]`. Only inject if the count is currently below 4.
+- Do not assume the incoming request has zero breakpoints — Claude Code adds its own.
+- Add a regression test case: request with 3 pre-existing `cache_control` markers should NOT receive a 4th injection.
+
+**Phase to address:** Phase 1 (breakpoint extension). This check must be in place before the 4th breakpoint injection is shipped.
 
 ---
 
-### 2. `bun.lock` conflicts are guaranteed on every upstream merge
+## Pitfall 2: TTL Injection Double-Application
 
-**What goes wrong:** Both forks are actively adding packages. The `bun.lock` file has a single-file format that records every resolved dependency version. Any upstream package addition or version change will conflict with any local `bun.lock` change. Bun's lockfile format is not human-friendly for three-way merges — the auto-merge result is often semantically invalid.
+**Risk:** The proxy already applies `injectSystemCacheTtl` globally in `packages/proxy/src/proxy.ts` (line 131) — this patches every existing `cache_control: { type: "ephemeral" }` in the `system` array to add `ttl: "1h"` when the `SYSTEM_PROMPT_CACHE_TTL_1H` config flag is enabled. If the v1.1 work also injects `ttl: "1h"` directly inside `OpenRouterProvider.transformRequestBody`, the same block will be processed by both layers. The result: any block already modified by the proxy-level injection will be processed again by the provider-level injection, which may try to re-set `ttl` on a block that already has it. This is harmless today because `injectSystemCacheTtl` checks `!block.cache_control.ttl` before writing — but that check only covers the system array, and only one specific field. If the v1.1 provider-level code handles the user message breakpoint differently, it may produce inconsistent TTL values across blocks in the same request.
 
-**Evidence:** HIGH confidence — confirmed by `bun.lock` appearing in the 63-file divergence list. This is a known class of problem in Bun monorepos (Bun issue [#20326](https://github.com/oven-sh/bun/issues/20326)).
+**Warning signs:**
+- System blocks have `ttl: "1h"` but the new user message breakpoint has `ttl: "ephemeral"` with no TTL (or vice versa)
+- Requests with `SYSTEM_PROMPT_CACHE_TTL_1H=true` behave differently from those without it for the same input
+- Cache hit rates are inconsistent across blocks: system hits but user message never hits
 
 **Prevention:**
-1. Accept the lockfile conflict and regenerate: after resolving all source file conflicts, delete `bun.lock` and run `bun install` to regenerate from the merged `package.json` files.
-2. Never manually edit `bun.lock` to resolve conflicts — the result will be silently inconsistent.
-3. Run `bun install --frozen-lockfile` in CI to detect lockfile drift before it reaches a merge.
+- Decide at design time: should TTL be controlled at the proxy level (global) or provider level (per-block)? Pick one path and keep it consistent.
+- The cleanest approach: keep `injectSystemCacheTtl` in `proxy.ts` for system blocks, and have the OpenRouter provider read the same config flag to decide whether to inject `ttl: "1h"` on the new user message breakpoint. This gives uniform TTL across all breakpoints without duplicating logic.
+- Add a test that verifies: given `SYSTEM_PROMPT_CACHE_TTL_1H=true`, all injected breakpoints (not just system) have `ttl: "1h"`.
+
+**Phase to address:** Phase 2 (1-hour TTL). Before shipping, verify the two injection paths do not conflict.
 
 ---
 
-### 3. Shared type packages (`packages/types`) drift creates invisible breakage
+## Pitfall 3: Non-Anthropic Models Receiving the 4th Breakpoint
 
-**What goes wrong:** The fork has local changes to `packages/types/src/account.ts` and `packages/types/src/stats.ts`. When upstream adds fields to the same type files, a successful three-way merge is possible but can produce a type that satisfies both forks' requirements without satisfying either's intent. TypeScript will not catch this if the merged fields are all additive. The runtime behavior may silently differ from both forks' expectations.
+**Risk:** The existing 3-breakpoint injection in the OpenRouter provider is currently ungated by model — it applies to all models routed through OpenRouter, including non-Anthropic ones (`openai/gpt-4o`, `google/gemini-2.5-pro`, etc.). This is deliberate and currently safe because OpenRouter silently ignores `cache_control` on models that do not support it. However, the 4th breakpoint targets the "high-token user message" — a heuristic selection (largest user message by character count or token estimate). This heuristic will apply the mutation to user messages in all requests, not just Claude requests. For non-Anthropic models, injecting `cache_control` into a user message content block is more likely to trigger a 400 than injecting it into tools or system, because some providers validate the messages array schema strictly.
 
-**Evidence:** HIGH confidence — confirmed by `packages/types/src/account.ts` and `packages/types/src/stats.ts` in the divergence list. This is a known monorepo shared types hazard.
-
-**Detection:** After every upstream merge, run `bun run typecheck` and look for errors in downstream consumers of the modified type files. Also diff the merged types file manually against both pre-merge versions.
+**Warning signs:**
+- Non-Anthropic model requests through the OpenRouter account return `400 invalid_request_error` after the 4th breakpoint is shipped
+- Errors are swallowed by the `catch` block; the proxy silently falls back and the caller sees a different response than expected
+- OpenRouter test account (e.g., `z-ai/glm-4.5-air:free`) starts returning errors on previously-working requests
 
 **Prevention:**
-1. Namespace fork-specific fields with a comment: `// FORK: added for usage throttling` so they are clearly distinguishable from upstream fields during conflict resolution.
-2. Keep type additions minimal and additive (new optional fields), never rename or remove existing upstream fields.
+- Gate the 4th breakpoint injection on model prefix: only inject on `anthropic/*` model slugs. This is a reversal of the v1.0 decision to omit the gate (documented in PROJECT.md as a deliberate choice) — but the 4th breakpoint is higher-risk than the first 3.
+- Add a regression test: a request with model `openai/gpt-4o` should not receive any user message `cache_control` injection.
+- Test with `z-ai/glm-4.5-air:free` via the OpenRouter account using `x-better-ccflare-account-id` to confirm no 400 errors before shipping.
+
+**Phase to address:** Phase 1 (breakpoint extension). The gate must be added alongside the 4th breakpoint.
 
 ---
 
-### 4. Upstream refactors `transformRequestBody` chain; the OpenRouter override breaks silently
+## Pitfall 4: Provider Preference Injected Upstream of Account-Level `transformRequestBody`
 
-**What goes wrong:** `OpenRouterProvider.transformRequestBody` calls `super.transformRequestBody(request, account)` and then mutates the result. If upstream changes the signature, return type, or semantics of `BaseAnthropicCompatibleProvider.transformRequestBody` (e.g., adds a required parameter, changes what it returns, or removes the method), the override will either fail to compile or silently stop applying its mutation.
+**Risk:** The OpenRouter `provider.order` field must be injected into the outgoing request body. The most obvious place is inside `OpenRouterProvider.transformRequestBody`. However, `transformRequestBody` is called *before* the body reaches the upstream, and the account object is passed as an optional parameter (`account?: Account`). If `provider_order` is a new field on `Account` (added to the DB schema and type), it will be available in `transformRequestBody`. But if the feature instead reads from a global config or ENV var that is not account-scoped, the injection will apply to *all* accounts routed through OpenRouter, not just the configured one — silently overriding the intent.
 
-**Evidence:** MEDIUM confidence — the pattern is inherently fragile; confirmed by observing that upstream's current `openrouter/provider.ts` has no `transformRequestBody` at all, meaning this is entirely a fork addition with no upstream baseline to rebase against.
+The `Account` interface and `AccountRow` interface in `packages/types/src/account.ts` are shared with upstream. Adding a `provider_order` field there will create a merge conflict on the next upstream sync.
 
-**Detection:** Check `git log upstream/main -- packages/providers/src/providers/base-anthropic-compatible.ts` before every merge to see if the parent class changed.
+**Warning signs:**
+- Provider preference set for one account bleeds into requests from other OpenRouter accounts
+- ENV var `OPENROUTER_PROVIDER_ORDER_<ACCOUNT_NAME>` parsing is brittle against account names with special characters
+- Account PATCH endpoint changes `provider_order` but the proxy does not pick it up until server restart (if caching the Account object in memory)
 
 **Prevention:**
-1. Add a test that asserts `cache_control` is present in the final request body after `transformRequestBody` runs. This test will fail immediately if the override chain breaks.
-2. The existing test in `packages/providers/src/providers/openrouter/__tests__/provider.test.ts` already does this — keep it and run it in CI on every upstream sync.
+- Store `provider_order` as a JSON string in a new `openrouter_provider_order` column on the `accounts` table — follow the exact same pattern as `model_mappings` (TEXT NULL, JSON encoded). This is the established per-account JSON config pattern in this codebase.
+- Add the migration as a non-destructive `ALTER TABLE accounts ADD COLUMN openrouter_provider_order TEXT` migration step — no table rebuild required.
+- Add `openrouter_provider_order?: string | null` to `AccountRow` and `openrouter_provider_order: string | null` to `Account`. Annotate both with `// FORK PATCH:` — upstream does not have this field and it will be a guaranteed merge conflict to manage.
+- In `transformRequestBody`, parse the JSON string and inject `provider: { order: [...] }` only when the field is non-null and the model is not already specifying a provider override.
+
+**Phase to address:** Phase 3 (per-account provider preference). Schema migration and type changes must happen before the injection logic.
 
 ---
 
-## Early Warning Signs
+## Pitfall 5: Dashboard UI PATCH Route Missing or Inconsistent with Account Update Path
 
-### Before merging upstream
+**Risk:** The Dashboard UI for per-account provider preference requires a PATCH endpoint to save the `openrouter_provider_order` field. The existing pattern in `packages/http-api/src/handlers/accounts.ts` for updating `model_mappings` is a dedicated route (`PUT /api/accounts/:id/model-mappings`). If the v1.1 work adds `openrouter_provider_order` to the existing account PATCH body without a dedicated handler, upstream merges that touch `accounts.ts` (which has 2000+ lines) will conflict. If it adds a new dedicated route, it must also be reflected in the `AccountResponse` type, the dashboard API client, and the React component — four files that all touch the account data shape.
 
-Run these checks before starting any upstream merge:
+**Warning signs:**
+- Dashboard saves the provider preference but a page refresh shows the old value (field not persisted to DB, only to in-memory state)
+- `AccountResponse` type in `packages/types/src/account.ts` does not include `openrouterProviderOrder`, so the dashboard client TypeScript type does not know about it and the field is dropped in serialization
+- The `accounts.ts` handler serializes accounts without the new field (it has multiple `SELECT` queries that must all be updated)
+
+**Prevention:**
+- Follow the `model_mappings` handler as the template exactly. It is the established precedent for per-account JSON config fields: dedicated GET, dedicated PATCH, field in `AccountResponse`.
+- Grep for every `SELECT ... FROM accounts WHERE` in `accounts.ts` and verify the new column is included in all of them — there are at least 4 such queries in the file.
+- Add `openrouterProviderOrder: string | null` to `AccountResponse` in `packages/types/src/account.ts`. Annotate with `// FORK PATCH:`.
+- Write an integration test: set `openrouter_provider_order` via PATCH, fetch the account, assert the field is present in the response.
+
+**Phase to address:** Phase 4 (Dashboard UI). Needs the DB column (Phase 3) before the UI can save values.
+
+---
+
+## Pitfall 6: Regression Test Scope Does Not Cover New Injection Paths
+
+**Risk:** The existing 10 regression tests in `packages/providers/src/providers/openrouter/__tests__/provider.test.ts` cover:
+- `extractUsageInfo` reading `prompt_tokens_details` (CACHE-01)
+- `transformRequestBody` injecting cache_control at 3 breakpoints (CACHE-02)
+
+They do NOT cover:
+- Breakpoint count checking (guard against exceeding 4)
+- The 4th user message breakpoint injection
+- `ttl: "1h"` being present on injected breakpoints
+- Non-Anthropic model requests not receiving user message injection
+- `provider.order` being injected when `openrouter_provider_order` is set
+
+If these paths are shipped without regression tests, the existing 10 tests will continue passing even when new code is broken. The tests will give a false green signal.
+
+**Warning signs:**
+- All 10 existing tests pass after new code is added
+- Manual inspection reveals the new injection paths are untested
+- A future PR removes the 4th breakpoint guard because it "looks like dead code" (no test enforces it)
+
+**Prevention:**
+- Add tests for every new injection path alongside the code. Minimum required additions:
+  - Breakpoint count guard: request with 3 existing `cache_control` markers does not get a 4th
+  - 4th breakpoint injection: request with large user message and `anthropic/*` model gets `cache_control` on the high-token user block
+  - Model gate: request with `openai/*` model does not get user message injection
+  - TTL: when config flag is true, all injected breakpoints have `ttl: "1h"`
+  - Provider order: when `account.openrouter_provider_order` is set, the outgoing body contains `provider.order`
+- Run `bun test packages/providers/src/providers/openrouter/` before every commit touching the provider.
+
+**Phase to address:** Every phase. Tests ship with the feature, not after.
+
+---
+
+## Pitfall 7: Pre-merge Check Script Does Not Cover New Files
+
+**Risk:** The pre-merge check script at `.planning/scripts/pre-merge-check.sh` has a hardcoded `HIGH_RISK_FILES` list with 3 files:
+- `packages/providers/src/providers/openai/provider.ts`
+- `packages/providers/src/providers/openrouter/provider.ts`
+- `packages/types/src/account.ts`
+
+The v1.1 work adds fork patches to additional files not in this list:
+- `packages/config/src/index.ts` (new config getter for TTL behavior, possibly provider preference)
+- `packages/database/src/migrations.ts` (new column migration)
+- `packages/http-api/src/handlers/accounts.ts` (new PATCH handler)
+- `packages/types/src/stats.ts` (if config settings surface is extended)
+
+If these files are not in `HIGH_RISK_FILES`, the pre-merge SOP will not surface conflicts in them during upstream merge preparation. A merge may proceed with undetected conflicts in these files.
+
+**Warning signs:**
+- Upstream merge completes cleanly according to the SOP but `bun run typecheck` fails afterward
+- A config getter that was added for v1.1 is silently overwritten by upstream's refactor of `config/src/index.ts`
+
+**Prevention:**
+- After shipping each v1.1 phase, update `HIGH_RISK_FILES` in `pre-merge-check.sh` to include every file that received a `// FORK PATCH:` annotation.
+- Document this as a mandatory step in the phase transition checklist.
+
+**Phase to address:** At the end of each phase, before marking it complete.
+
+---
+
+## Fork-Specific Risks
+
+### Annotation discipline
+
+Every new fork-specific line must carry a `// FORK PATCH:` comment. The v1.1 additions touch at least 5 files across 3 packages. Without consistent annotation, the next upstream merge author (or future self) cannot distinguish fork additions from upstream code during conflict resolution.
+
+- Schema column: `-- FORK PATCH: openrouter_provider_order for per-account provider preference` in the migration comment
+- Type additions: `// FORK PATCH: v1.1 per-account OpenRouter provider preference` on `AccountRow` and `Account`
+- Config additions: `// FORK PATCH: v1.1 TTL/provider preference config` on new getters
+- HTTP handler additions: `// FORK PATCH: v1.1 openrouter_provider_order endpoint`
+
+### Upstream merge surface for v1.1
+
+New files that will require attention on the next upstream merge (not previously in the merge risk set):
+
+| File | Risk | Likely conflict cause |
+|------|------|-----------------------|
+| `packages/database/src/migrations.ts` | LOW | Upstream adds columns to accounts table (ongoing) |
+| `packages/config/src/index.ts` | MEDIUM | Upstream adds/renames config keys |
+| `packages/http-api/src/handlers/accounts.ts` | HIGH | Upstream adds account endpoints; 2000+ line file |
+| `packages/types/src/account.ts` | HIGH | Already in risk list; new fields add conflict surface |
+| `packages/proxy/src/proxy.ts` | MEDIUM | `injectSystemCacheTtl` is a fork patch; upstream may touch nearby lines |
+
+### Regression test continuity
+
+The 10 existing tests in `openrouter/__tests__/provider.test.ts` are the regression baseline. All 10 must continue passing after every v1.1 change. The fastest way to verify this during development:
 
 ```bash
-# 1. Files where both forks changed — guaranteed conflict candidates
-git diff --name-only upstream/main HEAD
-
-# 2. Whether upstream touched the OpenRouter parent class
-git log upstream/main --oneline -- packages/providers/src/providers/base-anthropic-compatible.ts packages/providers/src/providers/openai/provider.ts packages/openai-formats/src/stream.ts
-
-# 3. Whether upstream changed the types this fork modified
-git log upstream/main --oneline -- packages/types/src/
-
-# 4. Dry-run merge to surface conflicts without committing
-git merge --no-commit --no-ff upstream/main
-git merge --abort
-```
-
-### After a successful merge
-
-```bash
-# Types still compile across all packages
-bun run typecheck
-
-# Cache token extraction still works end-to-end
 bun test packages/providers/src/providers/openrouter/
-bun test packages/providers/src/providers/openai/
-
-# Regenerate lockfile cleanly
-rm bun.lock && bun install
 ```
 
-### Sentinel values to monitor in production
+Run this after every meaningful edit to `provider.ts`. Do not wait for full test suite runs.
 
-| Signal | What it means |
-|---|---|
-| `cache_write_tokens > 0` on every request | Cache never hitting — check TTL, provider routing, or min token threshold |
-| `cache_write_tokens` always 0, `cached_tokens` also 0 | Field extraction broken — check `prompt_tokens_details` parsing |
-| Cost in tracker < 20% of OpenRouter billing | `cache_write_tokens` not being counted in cost model |
-| `finish_reason: "error"` in streaming chunks | Provider failed mid-stream; upstream handler may be silently dropping it |
-| Requests to non-Anthropic models return 400 | `cache_control` injection not gated on model prefix |
+### Testing constraint reminder
+
+The `z-ai/glm-4.5-air:free` model via the OpenRouter account (forced with `x-better-ccflare-account-id`) is the only permitted live test target. Never route through the `claude` account. For cache behavior specifically, a live test is the only way to verify that `cache_write_tokens` appears in the response — unit tests cannot substitute.
 
 ---
 
 ## Sources
 
-- [OpenRouter Prompt Caching Docs](https://openrouter.ai/docs/guides/best-practices/prompt-caching) — HIGH confidence, official
-- [OpenRouter Provider Routing Docs](https://openrouter.ai/docs/guides/routing/provider-selection) — HIGH confidence, official
-- [OpenRouter Error Handling Docs](https://openrouter.ai/docs/api/reference/errors-and-debugging) — HIGH confidence, official
-- [OpenRouter Model Fallbacks Docs](https://openrouter.ai/docs/guides/routing/model-fallbacks) — HIGH confidence, official
-- [anomalyco/opencode#18440 — Cache write tokens not accounted for](https://github.com/anomalyco/opencode/issues/18440) — HIGH confidence, real-world case with cost data
-- [OpenRouterTeam/ai-sdk-provider#35 — Prompt caching not working](https://github.com/OpenRouterTeam/ai-sdk-provider/issues/35) — MEDIUM confidence, community report
-- [opencode#16848 — prompt_cache_ttl silently ignored](https://github.com/anomalyco/opencode/issues/16848) — MEDIUM confidence, community report
-- [openclaw#10869 — Provider pinning feature gaps](https://github.com/openclaw/openclaw/issues/10869) — MEDIUM confidence, community report
-- [LiteLLM#19077 — disable_fallbacks ignored mid-stream](https://github.com/BerriAI/litellm/issues/19077) — MEDIUM confidence (LiteLLM, not OpenRouter, but same SSE pattern)
-- [openclaw#23715 — 5x API costs from ineffective caching](https://github.com/openclaw/openclaw/issues/23715) — MEDIUM confidence, real cost data
-- Codebase: `git diff upstream/main HEAD` — HIGH confidence, primary source for fork-specific claims
+- Codebase: `packages/providers/src/providers/openrouter/provider.ts` — PRIMARY (confirmed current implementation)
+- Codebase: `packages/proxy/src/proxy.ts` lines 131, 356-378 — `injectSystemCacheTtl` implementation (confirmed)
+- Codebase: `packages/config/src/index.ts` lines 355-366 — `getSystemPromptCacheTtl1h` (confirmed)
+- Codebase: `packages/types/src/account.ts` lines 83-148 — `AccountRow` and `Account` interfaces (confirmed)
+- Codebase: `.planning/scripts/pre-merge-check.sh` — `HIGH_RISK_FILES` list (confirmed 3 files only)
+- [OpenRouter Prompt Caching Docs](https://openrouter.ai/docs/guides/best-practices/prompt-caching) — 4-breakpoint limit, TTL format `{ type: "ephemeral", ttl: "1h" }` (HIGH confidence, official)
+- [OpenRouter Provider Routing Docs](https://openrouter.ai/docs/guides/routing/provider-selection) — `provider.order` is request-level only, no account-level equivalent (HIGH confidence, official)
+- .planning/PROJECT.md — v1.1 requirements, key decisions, fork patch inventory (PRIMARY)

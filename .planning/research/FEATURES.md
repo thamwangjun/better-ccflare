@@ -1,236 +1,131 @@
-# Fork Maintenance Patterns
+# Features Research — v1.1
 
-**Project:** better-ccflare (personal fork of tombii/better-ccflare)
-**Researched:** 2026-05-04
-**Confidence:** HIGH — multiple authoritative sources cross-verified
-
----
-
-## Merge vs Rebase vs Cherry-pick
-
-### How each works against an active upstream
-
-**Merge** (`git merge upstream/main`) creates a merge commit that records the integration point. Your custom commits remain at their original positions in history, interleaved with upstream commits chronologically. The commit graph becomes a DAG with explicit merge nodes.
-
-**Rebase** (`git rebase upstream/main`) replays your commits on top of the new upstream tip. History is linear. Commit SHAs are rewritten, which means everyone who has pulled your branch needs to `git pull --force` after every upstream sync.
-
-**Cherry-pick** selectively applies individual upstream commits to your branch. Used as a targeted tool rather than a full sync strategy — pick a specific fix without taking the whole upstream state.
-
-### When each breaks down
-
-| Strategy | Breaks down when... |
-|---|---|
-| Merge | You merge repeatedly without cleaning up — history becomes unreadable; `git log` shows interleaved upstream and downstream commits, making "what did I actually change?" impossible to answer at a glance |
-| Rebase | You have collaborators (or CI) consuming your fork branch — every rebase requires force-push; anyone who pulled your branch is now diverged. Also breaks down when upstream makes wide refactors that touch every file your patches touch |
-| Cherry-pick | The patch set is large — cherry-picking 20 upstream commits is error-prone; you can miss commits or pick them out of order and introduce subtle bugs |
-
-### Recommendation: merging rebase ("ours" merge + rebase --onto)
-
-Use the strategy employed by git-for-windows/git and microsoft/git: a **merging rebase**. The technique:
-
-1. Fetch upstream.
-2. Create a merge commit using `-s ours` (records the integration point without changing your tree).
-3. Rebase your patch commits `--onto` the new upstream tip using the previous merge base as the starting point.
-
-This gives you linear history with patches cleanly on top, eliminates the need for force-push (consumers of your fork branch are not disrupted), and makes "what is my delta from upstream?" a trivial `git log upstream/main..thamw-main --no-merges` query.
-
-Standard merge is the right fallback when: you are not the only developer working on `thamw-main`, or when an upstream release is so large that rebase conflicts would be too numerous — merge one large release, then resume rebase discipline.
-
-**Evidence:** GitHub Engineering blog (2022), amboar.github.io history-preserving fork maintenance article (2021), confirmed by independent Atlassian Git Tutorial documentation.
+**Project:** better-ccflare (personal fork)
+**Researched:** 2026-05-05
+**Overall confidence:** HIGH (Anthropic API), MEDIUM (OpenRouter provider preference)
 
 ---
 
-## Patch Management Strategies
+## Summary
 
-### The problem
+Three features extend the existing OpenRouter cache injection in `openrouter/provider.ts`. Feature 1 adds a 4th cache breakpoint targeting the last high-token user message in `messages[]`, reaching the Anthropic API maximum. Feature 2 upgrades selected cache blocks from the default 5-minute TTL to a 1-hour TTL using the `ttl: "1h"` field on the `cache_control` object — critical for agentic sessions where turns exceed 5 minutes. Feature 3 adds a `provider_order` column to the `accounts` table and injects `provider.order` into every OpenRouter request during `transformRequestBody`, with an ENV var seeding it at startup and a Dashboard UI field for changing it at runtime.
 
-You have recurring patches (e.g. `cache_control` injection, `cache_write_tokens` extraction) that must survive every upstream merge. The risk is that after an upstream merge you apply a patch that has already been superseded upstream, or you silently lose a patch because a conflict was resolved the wrong way.
-
-### What not to use
-
-**quilt** — effective for Linux kernel-style package patching, but it operates outside of git and does not leverage git's merge machinery. When upstream changes the same lines your patch touches, you resolve the conflict manually in a `.patch` text file rather than in your editor with conflict markers. Not recommended for a TypeScript monorepo where you already have git fluency.
-
-**TopGit** — maintains each patch as a pair of git branches (patch branch + base branch) and uses `git merge` to propagate upstream into each patch. Powerful for large, interdependent patch stacks. Overkill for a 2-3 patch delta in a single subdirectory. TopGit also has a small, fragmented maintainer community as of 2025.
-
-### What to use: disciplined commit organization + git format-patch as export
-
-Since your patch surface is narrow (primarily `packages/providers/src/providers/openrouter/`), the most reliable approach is:
-
-1. **Tag your patches explicitly.** Every commit that is a fork-local customization (not contributed upstream) gets a prefix or trailer: `[fork]` or `downstream:` in the commit message. This makes `git log --grep='downstream:' upstream/main..thamw-main` an instant inventory of what you carry.
-
-2. **Keep patches atomic, one idea per commit.** `c82b945 fix: extract cache_write_tokens` and `8e5774e feat: inject cache_control ephemeral` are already good examples — each is a self-contained idea. Do not combine upstream-contributed fixes with downstream customizations in the same commit.
-
-3. **Export patches as insurance.** After each upstream merge, run:
-   ```bash
-   git format-patch upstream/main..thamw-main --no-merges -o .planning/patches/
-   ```
-   This gives you a portable backup of every downstream commit as numbered `.patch` files. If a rebase goes wrong, you can `git am` them onto a clean upstream checkout. Store this directory in the repo.
-
-4. **Do not use `git format-patch` as the primary workflow.** It does not roundtrip cleanly — each `format-patch` + `git am` cycle produces slightly different SHA context, so it is a recovery tool, not the daily driver.
-
-**Evidence:** natkr.com (2025) on Lappverk/git format-patch; git-scm.com git-format-patch documentation; die-antwort.eu long-lived fork article (2016, still authoritative for git mechanics).
+The three features are additive and non-conflicting, but Feature 2 (1hr TTL) has a strict Anthropic ordering constraint — 1hr TTL blocks must appear before 5-minute TTL blocks in the prompt — that interacts directly with the breakpoint injection order established by Feature 1.
 
 ---
 
-## Conflict Minimization
+## Feature 1: Extended Cache Breakpoints
 
-### The structural advantage you already have
+**Current state:** `transformRequestBody` injects 3 breakpoints — last tool in `tools[]`, last system block in `system`, last content block of last assistant turn in `messages[]`.
 
-Your primary patches are isolated to `packages/providers/src/providers/openrouter/provider.ts` — a file that is a **subclass** (`OpenRouterProvider extends AnthropicCompatibleProvider`). This is already the right structure: your customizations override methods in a subclass rather than editing the parent class or shared infrastructure. Upstream can change `AnthropicCompatibleProvider` without touching your file.
+**Table stakes (minimum for correct behavior):**
+- Identify the last `messages[]` entry with `role: "user"` that has substantial content.
+- Inject `cache_control: { type: "ephemeral" }` on the last content block of that user message.
+- Maintain injection order: tools → system → user message → assistant turn. Anthropic processes breakpoints in document order and caches from the start of the prompt up to each breakpoint.
 
-### Tactics that reduce conflict surface
+**Anthropic API specifics (HIGH confidence — official Anthropic docs):**
+- Hard limit is 4 cache breakpoints per request. If more than 4 are present, Anthropic silently uses only the 4 most recent (from back to front). There is no 400 error — the extra breakpoints are silently discarded.
+- Minimum cacheable token threshold varies by model: 1,024 tokens for Claude Sonnet 3.x; 2,048 for Sonnet 4.6 and Haiku 3.5; 4,096 for Opus 4.x and Haiku 4.5. A breakpoint on a block under the threshold is silently ignored — no error, no cache write.
+- OpenRouter passes `cache_control` blocks through to Anthropic unchanged (HIGH confidence — OpenRouter docs confirm pass-through for explicit per-block breakpoints across Anthropic, Bedrock, and Vertex routing paths).
 
-**1. Never patch core files.** If a needed behavior is in a shared/core module, upstream the change or introduce an extension point (a method override, a hook, a configuration option) rather than editing the shared file directly. One line changed in `packages/proxy/src/handler.ts` will conflict on nearly every upstream release; one override in `OpenRouterProvider` almost never will.
-
-**2. Minimize line-level overlap.** Patches that insert lines between existing lines are more fragile than patches that add methods to the bottom of a class or add new files. Adding `transformRequestBody` as an override on `OpenRouterProvider` is nearly zero-conflict — upstream does not touch a method that doesn't exist in the base class.
-
-**3. Use extension registries, not in-place edits.** If upstream provides a plugin/registry pattern (e.g., a provider registry where you register `OpenRouterProvider`), use that rather than editing the registry initialization file. New registrations added at the bottom of a list survive upstream changes to the middle of that list.
-
-**4. One feature per file when possible.** The current split of `index.ts` (exports) + `provider.ts` (implementation) in the openrouter directory is good practice. Keep downstream-only additions in their own files (e.g., a `transform-cache.ts`) rather than embedding them in files upstream also touches.
-
-**5. Enable `rerere`.** Git's "reuse recorded resolution" feature remembers how you resolved a specific conflict hunk and automatically replays that resolution the next time the same conflict appears. For recurring patches that touch the same lines every merge cycle:
-   ```bash
-   git config --global rerere.enabled true
-   ```
-   This is a one-time setup that silently eliminates repetitive conflict resolution. Confidence: HIGH (git-scm.com official documentation).
-
-**Evidence:** coderefinery.github.io avoiding conflicts guide; Atlassian merge conflicts documentation; git-scm.com rerere documentation; direct inspection of the codebase structure.
+**Edge cases:**
+- **Short user messages:** A short clarifying question ("ok, proceed") injected as a 4th breakpoint wastes the slot — Anthropic silently ignores it (below token threshold) but the breakpoint slot is still consumed, meaning a longer earlier user message that would have qualified gets skipped by the silent back-to-front selection. Mitigation: only inject the 4th breakpoint if the target user message content exceeds a rough character-count heuristic (e.g., >500 chars equates to ~125 tokens minimum). No SDK token counter is needed — a character estimate is sufficient as a guard.
+- **No eligible user message:** If `messages[]` contains only assistant turns (pathological case) or a single short user message below threshold, skip the 4th breakpoint injection. The slot is better left unused.
+- **String vs array content:** The existing assistant-turn code already handles string-to-array conversion. The same pattern applies to user messages: convert string content to `[{ type: "text", text: ..., cache_control: ... }]`.
+- **4th breakpoint + existing 3 equals exactly 4:** This is the target state. No silent truncation occurs in normal use.
+- **Image content blocks in user messages:** `cache_control` can be placed on image blocks. The implementation should target the last content block of the user message regardless of type, consistent with the existing assistant-turn logic.
+- **Injection order relative to existing 3 breakpoints:** The 4th breakpoint (user message) must be inserted between breakpoint 2 (system) and breakpoint 3 (last assistant). In document order: tools → system → **user message** → last assistant. The current `transformRequestBody` method injects tools first, then system, then assistant — the user message breakpoint must be injected between system and assistant in the same method body.
 
 ---
 
-## Tracking Upstream Changes
+## Feature 2: 1-Hour TTL Cache Blocks
 
-### The problem
+**Current state:** All injected breakpoints use `{ type: "ephemeral" }` which defaults to 5-minute TTL.
 
-After a major upstream merge, you need to know: (a) what upstream changed, (b) whether any upstream change supersedes one of your patches, and (c) whether any upstream change conflicts with code your patches depend on.
+**Table stakes (minimum for correct behavior):**
+- Add `ttl: "1h"` to the `cache_control` object for stable breakpoints: `{ type: "ephemeral", ttl: "1h" }`.
+- Apply 1hr TTL only to breakpoints 1 (tools) and 2 (system prompt) — content that does not change between turns.
+- Keep 5-minute TTL on breakpoints 3 (user message) and 4 (last assistant turn) — content that changes every turn and whose cache entry is invalidated by the next message regardless of TTL.
 
-### Commands
+**Anthropic API specifics (HIGH confidence — official Anthropic docs, confirmed by OpenRouter caching docs):**
+- TTL field is `"ttl"` with values `"5m"` (default, equivalent to omitting the field) or `"1h"`.
+- Cache read cost is identical for both TTLs: 0.1x base input tokens (90% discount).
+- Cache write cost differs: `"5m"` = 1.25x input tokens (25% premium), `"1h"` = 2x input tokens (100% premium). The higher write cost for tools and system prompt is offset by avoiding repeated cache writes across turns.
+- **Ordering constraint (CRITICAL — enforced by Anthropic API):** Within a single request, 1hr TTL blocks must appear before 5-minute TTL blocks in document order. Violating this returns a 400 error from Anthropic. OpenRouter propagates this 400 to the client unchanged.
+- Both TTL types count against the 4-breakpoint limit equally.
+- OpenRouter confirms support for both TTL values with pass-through behavior for Anthropic-routed requests.
 
-**What is different between last merge and now:**
-```bash
-git log LAST_MERGE_TAG..upstream/main --oneline --no-merges
-```
+**When to use 1hr vs 5min:**
+- Tools (`body.tools`) and system prompt (`body.system`) do not change across turns in a Claude Code or agentic session. The 1hr TTL ensures the cache remains warm even when a user pauses between turns for more than 5 minutes. The 2x write premium is justified by the elimination of repeat cache writes on every request.
+- Last user message and last assistant turn are invalidated on every new turn — their cache lifetime is bounded by the conversation turn, not by any TTL. Using 1hr TTL for them wastes the 2x write premium.
 
-**What files did upstream change (scoped to your patch surface):**
-```bash
-git diff LAST_MERGE_TAG upstream/main -- packages/providers/src/providers/openrouter/
-```
+**Edge cases:**
+- **Provider switch mid-session:** If a subsequent request routes to a different OpenRouter account, the prior backend's cache is cold. The 1hr TTL guarantees warmth on the specific backend for 1 hour, but backend identity across accounts is not guaranteed by OpenRouter unless `provider.order` is also set (Feature 3 dependency). Without Feature 3, the 1hr TTL benefit is probabilistic for multi-account sessions.
+- **Bedrock and Vertex AI routing via OpenRouter:** Explicit per-block breakpoints work across Anthropic, Bedrock, and Vertex AI routing paths through OpenRouter. However, `ttl: "1h"` is an Anthropic-specific feature. Bedrock and Vertex may not support the 1hr TTL parameter and may return an error or silently ignore it. LOW confidence on exact behavior — needs empirical verification. Safe mitigation: only inject `ttl: "1h"` for `anthropic/*` model prefixes, and fall back to `"5m"` (omit the `ttl` field) for Bedrock/Vertex models. This is a low-risk decision — the existing breakpoints already work for all model prefixes.
+- **Minimum token threshold still applies for 1hr blocks.** A 1hr block under threshold is silently ignored (wasting the 2x write premium and consuming the breakpoint slot). The tools and system prompt breakpoints in agentic sessions nearly always exceed threshold, so this is low-risk in practice.
 
-**Symmetric difference — what upstream has that your branch doesn't, and vice versa:**
-```bash
-git log --cherry upstream/main...thamw-main --no-merges --left-right
-```
-The `...` (triple-dot) notation shows symmetric difference. `>` markers are your downstream commits; `<` markers are upstream commits not in your branch. This is the definitive view of divergence.
-
-**Did upstream reimplement something you already patched:**
-```bash
-git log upstream/main --oneline -- packages/providers/src/providers/openrouter/
-```
-If you see new commits here, inspect them before merging — they may supersede your patches and allow you to drop a downstream commit.
-
-### Changelog habits
-
-**Tag your merge points.** Every time you merge upstream, create a lightweight tag:
-```bash
-git tag merged-upstream-$(date +%Y%m%d) upstream/main
-```
-This gives you permanent reference points for log range commands. You currently use commit message references like "Merge v3.4.27 into thamw-main" — that is good, but a tag is more reliable for programmatic use.
-
-**Check the upstream CHANGELOG or release notes before merging.** Look specifically for changes to the provider system, `AnthropicCompatibleProvider`, or the OpenRouter entry. This takes 2 minutes and lets you anticipate conflicts before running `git merge`.
-
-**Evidence:** die-antwort.eu (2016); GitHub Engineering blog (2022) `git range-diff` usage; git-scm.com triple-dot notation documentation; direct inspection of this repository's commit history.
+**Interaction with Feature 1 (ordering constraint):**
+The recommended injection order (tools 1hr → system 1hr → user message 5min → last assistant 5min) satisfies the Anthropic ordering constraint (1hr before 5min). This constraint is naturally satisfied by the document order of the prompt and requires no explicit sequencing logic beyond maintaining the current injection order and assigning TTL by breakpoint position.
 
 ---
 
-## Recommended Workflow
+## Feature 3: Per-Account OpenRouter Provider Preference
 
-This workflow is calibrated for better-ccflare specifically: a Bun/TypeScript monorepo, patches primarily in `packages/providers/src/providers/openrouter/`, upstream active with frequent releases, fork consumed by one person (no collaborators on `thamw-main`).
+**Current state:** No `provider.order` is injected. OpenRouter uses its own load balancing across all available backends for the requested model.
 
-### One-time setup
+**Table stakes (minimum for correct behavior):**
+- Add a `provider_order` TEXT column to the `accounts` table (following the established pattern of `model_mappings` and `model_fallbacks` — stored as JSON array string, parsed at use time). Migration: `ALTER TABLE accounts ADD COLUMN provider_order TEXT`.
+- Add `provider_order: string | null` to `AccountRow` and `Account` interfaces in `packages/types/src/account.ts` and wire through `toAccount()`.
+- In `transformRequestBody` in `openrouter/provider.ts`, when `account?.provider_order` is non-null and parses to a non-empty array, merge `{ provider: { order: [...] } }` into the outgoing request body after the cache injection block.
+- Allow the value to be seeded via ENV var at startup (e.g., `BETTER_CCFLARE_OR_PROVIDER_ORDER_<ACCOUNT_NAME>=anthropic,together`). The startup code parses the env var, converts comma-separated string to JSON array, and persists to DB if not already set.
+- Expose a text input field in the Dashboard UI Account settings panel for editing the provider order as a comma-separated list, with save wired to the existing account update API endpoint.
 
-```bash
-# Enable rerere — resolves recurring conflicts automatically
-git config --global rerere.enabled true
+**OpenRouter API specifics (HIGH confidence — official OpenRouter docs):**
+- The request body field is `provider.order` — a JSON array of provider slug strings, e.g., `["anthropic", "together"]`.
+- Provider slugs are OpenRouter's internal identifiers. Examples: `"anthropic"`, `"together"`, `"fireworks"`, `"aws-bedrock"`, `"google-vertex"`. These are distinct from better-ccflare account provider names.
+- With `order` set, OpenRouter disables its default load balancing and attempts providers sequentially.
+- Default `allow_fallbacks: true` means if the first provider fails or is unavailable, OpenRouter tries the next in order, then falls back to any available provider. This default is correct for this use case.
+- The `provider` object is a top-level field in the OpenRouter request body alongside `model`, `messages`, and `max_tokens`.
 
-# Confirm remotes are correct
-git remote -v
-# Should show: origin (your fork), upstream (tombii/better-ccflare)
-```
+**Differentiators (useful but not required for v1.1):**
+- Dashboard UI validation that entered provider slugs are valid OpenRouter slugs. LOW priority — OpenRouter returns a clear error message on invalid slugs, and valid slugs can be discovered at https://openrouter.ai/docs.
+- Per-model override within one account (different `provider.order` for `claude-opus-4` vs `claude-sonnet-4-5`). Significant added complexity — requires a map structure instead of a flat array, a richer DB schema, and a more complex UI. Defer to future milestone.
 
-### Per-upstream-release workflow
+**Anti-features (explicitly excluded):**
+- `provider.only` — eliminates OpenRouter's fallback entirely; causes hard failures when the preferred provider is down. PROJECT.md explicitly excludes this. Always use `provider.order` with fallbacks enabled.
+- Per-request provider override via request header (e.g., `x-better-ccflare-openrouter-provider`) — deferred to a future milestone per PROJECT.md. Do not add this in v1.1.
+- Auto-detecting optimal provider per model — no OpenRouter API for real-time per-provider-per-model status; not feasible.
 
-**Step 1: Inventory your downstream patches before merging.**
-```bash
-git log upstream/main..thamw-main --oneline --no-merges --grep='downstream:\|feat:\|fix:' 
-# Review: are any of these patches already addressed upstream?
-```
+**Edge cases:**
+- **Provider unavailable:** With `allow_fallbacks: true` (the default; do not override), OpenRouter falls back gracefully. The injection must never include `allow_fallbacks: false`.
+- **Non-OpenRouter accounts:** The injection must be gated on `account.provider === "openrouter"`. Anthropic-native, Bedrock, and other provider accounts do not accept the `provider` field and may return 400 errors. The gate is already natural — `transformRequestBody` is only called for the OpenRouter provider.
+- **Null or empty `provider_order`:** If the column is null or parses to an empty array, skip injection and return to OpenRouter's default load balancing. This is the correct default for accounts without routing preference.
+- **BYOK (Bring Your Own Key) on OpenRouter:** OpenRouter prioritizes BYOK endpoints before the `provider.order` list regardless of ordering. This is an OpenRouter platform behavior outside our control. LOW confidence on whether typical users of this proxy configure BYOK on their OpenRouter account. Treat as a known limitation, not a blocker.
+- **Multiple OpenRouter accounts with different `provider_order`:** `SessionStrategy` selects the account; `transformRequestBody` receives the selected `account` object. Each account's `provider_order` is injected independently after selection. Two accounts with different values will correctly inject their respective preferences — no shared state issue.
+- **Cache interaction:** When `provider.order` routes primarily to `"anthropic"`, OpenRouter forwards to Anthropic's native API. Cache injection (Features 1 and 2) is fully effective in this path. When routing to Bedrock or Vertex, 1hr TTL behavior may differ (see Feature 2 edge cases) — this is the primary interaction risk between Feature 3 and Feature 2.
 
-**Step 2: Check what upstream changed in your patch surface.**
-```bash
-git fetch upstream
-git diff HEAD upstream/main -- packages/providers/src/providers/openrouter/
-# If this diff is empty, your rebase will be trivial.
-```
+---
 
-**Step 3: Rebase your patches onto upstream.**
-```bash
-git rebase upstream/main
-# If conflicts arise: resolve, git add, git rebase --continue
-# rerere will replay any previously-seen resolutions automatically
-```
+## Feature Interactions
 
-**Step 4: If Step 3 produces too many conflicts (large upstream release), fall back to merge.**
-```bash
-git merge upstream/main
-# Resolve conflicts, commit
-# Include the upstream version in the merge commit message: "Merge v3.X.Y into thamw-main"
-```
+**Feature 1 + Feature 2 (breakpoints + TTL):** The recommended TTL assignment by breakpoint position (tools 1hr, system 1hr, user message 5min, last assistant 5min) satisfies the Anthropic ordering constraint (1hr before 5min) naturally, since document order mirrors breakpoint position order. No explicit sequencing logic is needed beyond maintaining the current injection order. Implement Feature 1 and Feature 2 together in the same code change — they share the same `transformRequestBody` method and the TTL field is simply an additional key on the `cache_control` object.
 
-**Step 5: Tag the integration point.**
-```bash
-git tag merged-upstream-$(date +%Y%m%d)
-```
+**Feature 2 + Feature 3 (1hr TTL + provider preference):** The 1hr TTL benefit is maximized when the same backend processes all turns of an agentic session. Without provider preference, OpenRouter may route different turns to different Anthropic-compatible backends, making the cache cold on each new backend. Setting `provider_order: ["anthropic"]` on an OpenRouter account makes the 1hr TTL fully effective — each turn hits the same Anthropic-native backend where the cache was written. Feature 3 amplifies Feature 2's value for agentic use cases.
 
-**Step 6: Export patches as backup (run after any upstream integration).**
-```bash
-mkdir -p .planning/patches
-git format-patch upstream/main..thamw-main --no-merges -o .planning/patches/
-```
+**Feature 1 + Feature 3 (4th breakpoint + provider preference):** No direct interaction. The 4th breakpoint is structural (what gets cached); provider preference is routing (where it gets cached). They compose without conflict.
 
-**Step 7: Push.**
-```bash
-# If you rebased (step 3): force-push is required since you are the sole consumer
-git push origin thamw-main --force-with-lease
+**All three + existing v1.0 patches:** The existing 3-breakpoint injection and `cache_write_tokens` extraction are unaffected. Features 1 and 2 extend `transformRequestBody` in `openrouter/provider.ts` (same file, same method, same `// FORK PATCH:` annotation pattern). Feature 3 adds a new injection step at the end of `transformRequestBody` after the cache breakpoint logic. The `// FORK PATCH:` annotation must cover all three additions to maintain upstream merge safety per the v1.0 SOP.
 
-# If you merged (step 4): normal push
-git push origin thamw-main
-```
-
-Use `--force-with-lease` rather than `--force`: it refuses the push if someone else has pushed to the branch since your last fetch, preventing accidental overwrite.
-
-### Keeping patches survivable
-
-When writing a new downstream patch:
-- Put it in `OpenRouterProvider` as an `override` method wherever possible.
-- If it must touch a shared file, add a comment: `// downstream: [brief reason]` to make it visible during conflict review.
-- Commit it with a `downstream:` trailer so it shows up in the inventory command.
-- Never mix upstream-contribution work with downstream-only work in the same commit.
-
-### When to contribute upstream instead
-
-If a patch has been in your fork for more than two upstream releases and has not caused conflicts, it is probably safe and correct. Consider opening a PR upstream. The GitHub blog "friendly fork management" article identifies this as the single most effective long-term maintenance strategy: every patch accepted upstream is a patch you no longer have to carry.
+**Regression test surface:** The existing 10-test suite covers cache injection and usage extraction. New tests required: (a) 4th breakpoint injected on last high-token user message; (b) 4th breakpoint skipped when user message content is below threshold; (c) `ttl: "1h"` present on tools and system blocks; (d) `ttl` absent (or `"5m"`) on user message and assistant blocks; (e) `provider.order` injected when `account.provider_order` is non-null; (f) no `provider.order` injection when field is null; (g) no injection for non-OpenRouter accounts.
 
 ---
 
 ## Sources
 
-- [Git Tricks for Maintaining a Long-Lived Fork - DIE ANTWORT](https://die-antwort.eu/techblog/2016-08-git-tricks-for-maintaining-a-long-lived-fork/) — MEDIUM confidence (older but git mechanics are stable)
-- [History-Preserving Fork Maintenance with Git - amboar.github.io](https://amboar.github.io/notes/2021/09/16/history-preserving-fork-maintenance-with-git.html) — HIGH confidence (specific technical implementation, verified against git documentation)
-- [Strategies for Friendly Fork Management - GitHub Blog](https://github.blog/2022-05-02-friend-zone-strategies-friendly-fork-management/) — HIGH confidence (official GitHub source, describes real production workflows)
-- [How to Fork: Best Practices - Joaquim Rocha](https://joaquimrocha.com/how-to-fork) — MEDIUM confidence (practitioner perspective, aligns with other sources)
-- [Modifying Other People's Software - natkr.com (2025)](https://natkr.com/2025-08-14-modifying-other-peoples-software/) — MEDIUM confidence (recent, git format-patch workflow details)
-- [Avoiding Conflicts - CodeRefinery](https://coderefinery.github.io/git-branch-design/04-avoiding-conflicts/) — HIGH confidence (educational resource, verified against common practice)
-- [Git Rerere Documentation - git-scm.com](https://git-scm.com/book/en/v2/Git-Tools-Rerere) — HIGH confidence (official git documentation)
-- [Merging vs. Rebasing - Atlassian Git Tutorial](https://www.atlassian.com/git/tutorials/merging-vs-rebasing) — HIGH confidence (authoritative reference)
-- [Best Practices for Keeping a Forked Repository Up to Date - GitHub Community](https://github.com/orgs/community/discussions/153608) — MEDIUM confidence (community discussion, consistent with other sources)
-- [TopGit Overview - mackyle.github.io](https://mackyle.github.io/topgit/overview.html) — HIGH confidence (official documentation; evaluated and rejected as overkill for this use case)
+- Anthropic prompt caching API (HIGH confidence): https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+- OpenRouter provider selection (HIGH confidence): https://openrouter.ai/docs/guides/routing/provider-selection
+- OpenRouter prompt caching guide (HIGH confidence): https://openrouter.ai/docs/guides/best-practices/prompt-caching
+- OpenRouter presets (MEDIUM confidence): https://openrouter.ai/docs/guides/features/presets
+- Current codebase — `packages/providers/src/providers/openrouter/provider.ts` (v1.0 3-breakpoint injection)
+- Current codebase — `packages/types/src/account.ts` (Account interface, model_mappings/model_fallbacks pattern)
+- Current codebase — `packages/database/src/migrations.ts` (ALTER TABLE pattern for adding JSON TEXT columns)

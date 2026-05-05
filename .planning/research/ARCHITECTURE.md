@@ -1,118 +1,192 @@
-# OpenRouter Provider — Architecture
+# Architecture Research — v1.1
 
-**Researched:** 2026-05-04
-**Confidence:** HIGH (all findings from direct source reading)
-
----
-
-## Current buildRequest() behavior
-
-The OpenRouter provider does not have a `buildRequest()` method — the codebase uses `transformRequestBody()` instead. Here is what the actual call chain does:
-
-**Class hierarchy:**
-`OpenRouterProvider` extends `AnthropicCompatibleProvider` extends `BaseAnthropicCompatibleProvider` extends `BaseProvider`
-
-**`transformRequestBody()` chain (called in `proxy-operations.ts` at the point of dispatching):**
-
-1. `BaseAnthropicCompatibleProvider.transformRequestBody()` runs first (via `super.transformRequestBody()`). It calls `transformRequestBodyModel()` which rewrites `body.model` using `mapModelName()` — handling array mappings, fallbacks, env overrides, and defaults from the account config.
-
-2. `OpenRouterProvider.transformRequestBody()` then takes the model-mapped request, clones it, parses the JSON body, injects `cache_control: { type: "ephemeral" }` at the top level, and rebuilds a new `Request` with the modified body.
-
-**Fields set after the full chain:**
-- `model` — rewritten by model mapping logic
-- `cache_control: { type: "ephemeral" }` — injected by OpenRouter override
-- All original client fields are preserved (messages, max_tokens, stream, etc.)
-
-**URL building** (`buildUrl()`): Prefers `account.custom_endpoint` over the hardcoded default `https://openrouter.ai/api/v1`. Strips trailing slash and appends pathname + search directly (no path deduplication, unlike `AnthropicCompatibleProvider.buildUrl()` which strips duplicate path prefixes).
-
-**Header preparation** (`prepareHeaders()`): Inherited from `BaseAnthropicCompatibleProvider`. Deletes `authorization` and `x-api-key` from the client request, then sets `Authorization: Bearer <token>` (because `authHeader = "Authorization"` and `authType = "bearer"`). Also deletes `host` and both compression headers (`accept-encoding`, `content-encoding`).
+**Researched:** 2026-05-05
+**Confidence:** HIGH (all claims verified against OpenRouter docs and codebase inspection)
 
 ---
 
-## Token/Usage extraction
+## Summary
 
-OpenRouter uses the **Anthropic SSE wire format** (not OpenAI's `data: [DONE]` format), so usage comes from `message_start` and `message_delta` events.
-
-**Where it happens:** `BaseAnthropicCompatibleProvider.extractUsageInfo()` — inherited unchanged by `OpenRouterProvider`. No OpenRouter-specific override exists.
-
-**Non-streaming path:** Parses `response.json()`, reads `usage.input_tokens`, `usage.output_tokens`, `usage.cache_creation_input_tokens`, and `usage.cache_read_input_tokens`. Computes `promptTokens = input + cacheCreation + cacheRead`.
-
-**Streaming path:** `extractStreamingUsage()` scans the SSE stream for `event: message_start` (captures `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and `model`) and `event: message_delta` (captures final `output_tokens` and `cache_read_input_tokens`). `message_delta` values are treated as authoritative — they override `message_start` values when present.
-
-**`prompt_tokens_details` handling:** This is in `packages/providers/src/providers/openai/provider.ts` and `packages/openai-formats/src/stream.ts` — NOT in the OpenRouter provider. Those files extract `cache_write_tokens` and `cached_tokens` from `prompt_tokens_details` for providers that return OpenAI-format responses (Qwen/DashScope, generic OpenAI-compatible). OpenRouter uses the Anthropic SSE format so it does not go through those paths.
-
-**Dispatch point in proxy layer:** `response-processor.ts` (`updateAccountMetadata`) checks `ctx.provider.isStreamingResponse(response)`. If streaming and `provider.parseUsage` exists, it calls `parseUsage`. Otherwise it calls `extractUsageInfo`. `OpenRouterProvider` does not implement `parseUsage`, so it always goes through `extractUsageInfo` — which itself delegates to `extractStreamingUsage` for SSE responses.
-
-**Cost calculation:** `estimateCostUSD()` from `@better-ccflare/core` is called with the model name from the `message_start` event and the token counts.
+Three features add to the existing OpenRouter provider patch surface. Extended cache breakpoints and 1-hour TTL are entirely contained inside `openrouter/provider.ts` — single-file changes with no schema or API surface impact. Per-account OpenRouter provider preference cuts across all layers (DB schema, repository, types, API handler, dashboard) and is the only feature requiring multi-package coordination. Build order is therefore: schema and types first, then provider logic, then API, then UI.
 
 ---
 
-## Provider selection integration point
+## Components to Modify
 
-"Provider selection" here means pinning a request to a specific upstream model provider through OpenRouter's `provider` parameter (e.g., `{ "provider": { "order": ["Anthropic"] } }`).
-
-**Recommended integration point: `OpenRouterProvider.transformRequestBody()`**
-
-This is already where OpenRouter-specific request mutations happen (`cache_control` injection). Adding provider selection here is consistent, contained, and does not require changes to the proxy layer or the base class.
-
-The pattern would be:
-1. Accept the desired provider preference (e.g., from account config or a request header like `x-better-ccflare-openrouter-provider`).
-2. In `transformRequestBody()`, after parsing the body and before rebuilding the Request, inject `body.provider = { order: [selectedProvider] }` (or `allow_fallbacks: false`, etc.).
-
-**Why not a request transform in the proxy layer:** `proxy-operations.ts` already applies a model override (`body.model = modelOverride`) directly on the buffer before `transformRequestBody` is called. Any additional OpenRouter-specific mutation there would couple the proxy layer to provider-specific knowledge. The provider owns its own request shape.
-
-**Why not `prepareHeaders()`:** Provider selection is a body-level field, not a header. OpenRouter's provider routing is part of the JSON request body.
-
-**Source of the preference:** It can come from:
-- `account.custom_endpoint` is already used for URL; a similar `account.provider_options` JSON field would be the cleanest DB-level approach.
-- A passthrough header (`x-better-ccflare-openrouter-provider`) is simpler if no DB schema change is wanted. Headers are available in `transformRequestBody` via `request.headers`.
+| Component | File | What Changes | Risk |
+|-----------|------|--------------|------|
+| OpenRouter provider | `packages/providers/src/providers/openrouter/provider.ts` | Add 4th cache breakpoint (last user message content block); add `ttl: "1h"` computation from session count; inject `body.provider.order` from account field | MEDIUM — single file but fork patch surface grows; upstream merge conflict if tombii adds caching upstream |
+| OpenRouter test suite | `packages/providers/src/providers/openrouter/__tests__/provider.test.ts` | New test cases for 4th breakpoint, TTL injection, provider.order injection | LOW — test-only change |
+| Account type | `packages/types/src/account.ts` | Add `openrouter_provider_preference: string \| null` to `AccountRow` and `Account`; add field to `toAccount()` mapper; add `openrouterProviderPreference: string \| null` to `AccountResponse` and `toAccountResponse()` | LOW — additive; TypeScript enforces completeness at compile time |
+| DB migrations | `packages/database/src/migrations.ts` | Add `ALTER TABLE accounts ADD COLUMN openrouter_provider_preference TEXT DEFAULT NULL` block following the existing `if (!columnNames.includes(...))` guard pattern | LOW — additive, idempotent |
+| Account repository | `packages/database/src/repositories/account.repository.ts` | Add `openrouter_provider_preference` to SELECT columns in `findAll()` and `findById()`; add `updateOpenRouterProviderPreference(accountId: string, value: string \| null): Promise<void>` method | LOW — pure additive |
+| DB operations facade | `packages/database/src/database-operations.ts` | Expose `updateOpenRouterProviderPreference` through the facade | LOW |
+| Config | `packages/config/src/index.ts` | Add `openrouterDefaultProvider: string \| undefined` read from `OPENROUTER_DEFAULT_PROVIDER` env var | LOW — optional env var, undefined when unset |
+| HTTP API accounts handler | `packages/http-api/src/handlers/accounts.ts` | Extend the account update endpoint to accept `openrouterProviderPreference` body field; validate as string \| null; persist via facade | LOW — follows existing `billingType` pattern exactly |
 
 ---
 
-## Streaming considerations
+## New Components
 
-OpenRouter uses the **Anthropic SSE event format** for Anthropic-family models (Claude), not the OpenAI `data: {"choices":[...]}` / `data: [DONE]` format. This means:
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| Provider preference dialog | `packages/dashboard-web/src/components/accounts/AccountOpenRouterProviderDialog.tsx` | Mirrors `AccountCustomEndpointDialog.tsx` — single text input for provider slug (e.g. `"anthropic"`, `"together"`), save/cancel, visible only for openrouter accounts |
+| Dialog export | `packages/dashboard-web/src/components/accounts/index.ts` | Add export for the new dialog component |
 
-1. **Tool call chunks are cumulative, not incremental.** Unlike Qwen/DashScope (which sends incremental argument chunks), OpenRouter forwards Anthropic's native SSE events where `input_json_delta` chunks are already well-formed partial strings. No special buffering is needed for tool calls on the OpenRouter path — the base Anthropic SSE handling works correctly.
-
-2. **`message_delta` is the source of truth for final token counts.** The `extractStreamingUsage` implementation already breaks out of its read loop as soon as `messageDeltaUsage` is populated, treating it as authoritative. This is correct for OpenRouter.
-
-3. **`cache_control` injection at the body level is the right approach for prompt caching.** OpenRouter's prompt caching for Anthropic models is triggered by the `cache_control` field at the request body level (not per-message-block). This is already implemented.
-
-4. **No `parseUsage` override.** `OpenRouterProvider` does not implement `parseUsage`. The proxy layer falls back to `extractUsageInfo`, which correctly dispatches to `extractStreamingUsage` for SSE responses. This works but means usage extraction reads the cloned response body independently of the forwarding path — acceptable given that the clone is made before the response is forwarded.
-
-5. **Non-Anthropic models via OpenRouter** (e.g., GPT-4o, Gemini) will return OpenAI-format SSE. The current `extractStreamingUsage` will not find `message_start`/`message_delta` events and return null. Usage tracking silently drops for non-Anthropic models routed through OpenRouter. This is a known gap.
+No new packages, no new DB tables, no new workers.
 
 ---
 
-## Extension pattern
+## Data Flow Changes
 
-The codebase has a clean, established pattern for adding capabilities to an existing provider without breaking inherited behavior:
+### Feature 1: Extended Cache Breakpoints (4th breakpoint)
 
-**Step 1: Override `transformRequestBody()` in `OpenRouterProvider`**
+Current: tools → system → last assistant turn (3 breakpoints).
 
-Always call `super.transformRequestBody(request, account)` first to get model mapping applied, then apply OpenRouter-specific mutations. The current `cache_control` injection demonstrates this pattern exactly.
+New: tools → system → last assistant turn → last user turn (4 breakpoints).
 
-```typescript
-override async transformRequestBody(request: Request, account?: Account): Promise<Request> {
-  const mapped = await super.transformRequestBody(request, account);
-  // ... mutate body ...
-  return new Request(mapped.url, { method, headers, body: JSON.stringify(body) });
-}
+The 4th breakpoint targets the last user message when it contains a content array with at least one text block. This is the correct Anthropic placement for caching large user-side context (RAG chunks, file contents passed by Claude Code).
+
+```
+transformRequestBody(request, account)
+  → inject on tools[] last entry                    (breakpoint 1 — unchanged)
+  → inject on system[] last block                   (breakpoint 2 — unchanged)
+  → inject on last assistant turn content           (breakpoint 3 — unchanged)
+  → inject on last user turn content block          (breakpoint 4 — NEW)
+    condition: last user msg content is an array with a text block
+    placement: last content block in that user message
+    cache_control: { type: "ephemeral", ...(ttl ? { ttl } : {}) }
 ```
 
-**Step 2: Override `extractUsageInfo()` only if OpenRouter's response shape diverges**
+Single file: `openrouter/provider.ts`. Injection block follows the identical pattern to breakpoint 3, with `.find((m: any) => m.role === "user")` instead of `"assistant"`. Ordering within `transformRequestBody` puts this after the assistant breakpoint so the user turn is processed last (matches Anthropic's tools → system → messages processing order — user messages are always last in messages[]).
 
-Currently it inherits the Anthropic-compatible streaming parser which is correct. Only override if you need to handle `prompt_tokens_details` for non-Anthropic model responses routed through OpenRouter.
+Confidence: HIGH — OpenRouter docs confirm 4-breakpoint limit for Anthropic-routed requests; user message placement is explicitly documented and demonstrated with examples.
 
-**Step 3: Do not touch the proxy layer (`proxy-operations.ts`) for provider-specific logic**
+### Feature 2: 1-hour TTL Cache Blocks
 
-The proxy layer is provider-agnostic by design. Provider-specific knowledge belongs in the provider class. The only proxy-layer mutation that is provider-aware today is the `modelOverride` patch, which is a combo-slot feature — not provider-specific.
+OpenRouter supports `{ type: "ephemeral", ttl: "1h" }` (1-hour) alongside the default `{ type: "ephemeral" }` (5-minute). No new cache type — it is the same `ephemeral` type with an optional `ttl` field.
 
-**Step 4: Add optional configuration to the provider constructor**
+TTL selection is computed once at the top of `transformRequestBody` and applied to all breakpoints in that request:
 
-The `AnthropicCompatibleConfig` interface is the right place to add new provider-level options. `OpenRouterProvider` currently hard-codes its config in the constructor. To support runtime configuration (e.g., per-account provider preferences), read from `account` in `transformRequestBody` rather than from constructor config — the `account` parameter is always passed by the proxy layer.
+```
+transformRequestBody(request, account)
+  → const useExtendedTtl = (account?.session_request_count ?? 0) > SESSION_COUNT_THRESHOLD
+  → const cacheControl = useExtendedTtl
+      ? { type: "ephemeral", ttl: "1h" }
+      : { type: "ephemeral" }
+  → inject cacheControl at each breakpoint
+```
 
-**Step 5: Write tests in `__tests__/provider.test.ts`**
+`account.session_request_count` is already on the `Account` object, which is already passed to `transformRequestBody`. No DB schema change required. `SESSION_COUNT_THRESHOLD` should be a named constant (e.g., `5`) in the provider file.
 
-The existing test file (`packages/providers/src/providers/openrouter/__tests__/provider.test.ts`) tests `transformRequestBody` directly against a Request object. Add new tests that cover each new mutation path, following the exact pattern already there (construct a `Request`, call `transformRequestBody`, assert on `result.json()`).
+Confidence: HIGH — OpenRouter docs show `ttl: "1h"` as the exact syntax on the ephemeral cache_control object. The `ttl` key is absent by default (5-minute window).
+
+### Feature 3: Per-Account OpenRouter Provider Preference
+
+This is the cross-layer feature. Complete data flow:
+
+```
+OPENROUTER_DEFAULT_PROVIDER env var (optional, read at startup)
+  → Config.openrouterDefaultProvider
+      ↓
+Per-account override:
+  Dashboard UI (AccountOpenRouterProviderDialog)
+    → PATCH /api/accounts/:id { openrouterProviderPreference: "anthropic" }
+    → accounts.ts handler validates and calls dbOps.updateOpenRouterProviderPreference()
+    → account.repository.ts UPDATE accounts SET openrouter_provider_preference = ?
+      ↓
+  Account object loaded from DB:
+    account.openrouter_provider_preference = "anthropic" | null
+      ↓
+  transformRequestBody(request, account):
+    const providerPref = account?.openrouter_provider_preference
+      ?? config.openrouterDefaultProvider
+      ?? null
+    if (providerPref && !body.provider) {
+      body.provider = { order: [providerPref] }
+    }
+      ↓
+  Outbound OpenRouter request:
+    { ..., "provider": { "order": ["anthropic"] } }
+```
+
+Key design decisions baked into this flow:
+
+1. **Client `provider` field wins**: The guard `if (!body.provider)` ensures a client that already sends `provider.order` is not overridden by the account default. Explicit client intent always takes precedence.
+
+2. **Config is the fallback, not the override**: ENV var provides a system-wide default, useful when all OpenRouter accounts should prefer the same backend. Per-account DB value overrides it.
+
+3. **`provider.order` not `provider.only`**: Per PROJECT.md constraint. `provider.only` eliminates all fallback and can cause hard failures. `provider.order` expresses preference while allowing OpenRouter to fall back to other providers if the preferred one is down.
+
+4. **No API call to OpenRouter**: OpenRouter has no account-level provider preference API — their `provider.order` is request-body-only. Storing it in our DB and injecting at request time is the only correct approach.
+
+Confidence: MEDIUM for the overall design (single-source verified for OpenRouter API; DB pattern extrapolated from existing `billing_type` precedent which is confirmed in codebase). HIGH for the `provider.order` injection point.
+
+---
+
+## Build Order
+
+Dependencies run bottom-up: DB schema → types → DB layer → config → provider logic → API → UI.
+
+**Phase 1: Data model** (no provider changes, no UI)
+
+1. `packages/database/src/migrations.ts` — add `openrouter_provider_preference` migration
+2. `packages/types/src/account.ts` — add field to `AccountRow`, `Account`, `toAccount()`, `AccountResponse`, `toAccountResponse()`
+3. `packages/database/src/repositories/account.repository.ts` — add to SELECT queries; add `updateOpenRouterProviderPreference` method
+4. `packages/database/src/database-operations.ts` — expose the new repository method
+5. `packages/config/src/index.ts` — add `openrouterDefaultProvider` from env
+
+All other phases depend on `Account.openrouter_provider_preference` existing in the type. Phase 1 must ship first. Run `bun run typecheck` after Phase 1 to confirm no regressions.
+
+**Phase 2: Provider logic** (all three features land together)
+
+6. `packages/providers/src/providers/openrouter/provider.ts`:
+   - Compute TTL from `session_request_count`
+   - Inject 4th breakpoint (user message)
+   - Apply computed TTL to all 4 breakpoints
+   - Inject `provider.order` from resolved preference
+7. `packages/providers/src/providers/openrouter/__tests__/provider.test.ts` — new test cases for all three behaviors
+
+Rationale: All three provider features share the same method (`transformRequestBody`). Landing them together minimizes the number of times the fork patch is touched, keeping the diff reviewable. Tests go in the same commit as the implementation.
+
+**Phase 3: API layer**
+
+8. `packages/http-api/src/handlers/accounts.ts` — extend update endpoint for `openrouterProviderPreference`
+
+This phase only applies to Feature 3 (per-account preference). Features 1 and 2 have no API surface — they are purely provider-internal.
+
+**Phase 4: Dashboard UI**
+
+9. `packages/dashboard-web/src/components/accounts/AccountOpenRouterProviderDialog.tsx` — new dialog
+10. `packages/dashboard-web/src/components/accounts/index.ts` — export
+11. `AccountListItem.tsx` — wire in the dialog, gate on `account.provider === "openrouter"`
+12. Mutation hook or inline query invalidation
+
+Rationale: UI is entirely dependent on Phase 3 API and Phase 1 types. Cannot meaningfully develop or test UI without the API endpoint existing.
+
+---
+
+## Integration Risks
+
+| Risk | Severity | Where | Mitigation |
+|------|----------|-------|------------|
+| Upstream adds its own cache injection in `openrouter/provider.ts` | HIGH | `openrouter/provider.ts` | `// FORK PATCH:` annotation already flags the entire `transformRequestBody` override for `pre-merge-check.sh`. The SOP handles this. No additional action needed, but during every upstream merge: manually verify the cache injection still works after merge. |
+| 4th breakpoint + 1h TTL applied when client already has `cache_control` on user message | MEDIUM | `openrouter/provider.ts` | Follow existing breakpoint pattern: only inject if the target block does not already have `cache_control`. Add guard: `if (!lastBlock.cache_control)` before injecting. Prevents double-injection. |
+| `provider.order` injection clobbers client-supplied provider routing | MEDIUM | `openrouter/provider.ts` | Resolved by `if (!body.provider)` guard (detailed in data flow above). Client always wins. |
+| `toAccount()` mapper fails silently for existing DBs without the new column | LOW | `packages/types/src/account.ts` | Existing pattern handles this: `row.openrouter_provider_preference \|\| null`. SQLite returns undefined for missing columns; the `\|\| null` coercion converts to null safely. Migration runs before any request is served. |
+| `AccountResponse` missing `openrouterProviderPreference` in some code paths | LOW | `packages/types/src/account.ts` | TypeScript enforces the field in `toAccountResponse()`. Compile-time catch. Run `bun run typecheck` after Phase 1. |
+| Dashboard dialog visible for non-OpenRouter accounts | LOW | `AccountListItem.tsx` | `account.provider === "openrouter"` gate on the menu item render. Straightforward conditional. |
+| TTL upgrade fires on very short high-frequency sessions | LOW | `openrouter/provider.ts` | Threshold constant is tunable. Default of 5 turns is conservative — at session_request_count 0 (first request), TTL is always 5 minutes. Adjust `SESSION_COUNT_THRESHOLD` as needed post-deployment. |
+
+---
+
+## Sources
+
+- OpenRouter prompt caching docs (verified 2026-05-05): https://openrouter.ai/docs/guides/best-practices/prompt-caching — confirms `{ type: "ephemeral", ttl: "1h" }` syntax; 4-breakpoint limit for Anthropic models; user message placement supported
+- OpenRouter provider routing docs (verified 2026-05-05): https://openrouter.ai/docs/guides/routing/provider-selection — confirms `provider.order` is a request-body-only field; no account-level order setting exists in OpenRouter's API; proxy-side injection is the correct implementation approach
+- Codebase (verified 2026-05-05):
+  - `packages/providers/src/providers/openrouter/provider.ts` — 3-breakpoint `transformRequestBody` and `extractUsageInfo` override
+  - `packages/types/src/account.ts` — `Account`, `AccountRow`, `toAccount`, `AccountResponse`, `toAccountResponse`
+  - `packages/database/src/repositories/account.repository.ts` — additive column SELECT pattern
+  - `packages/database/src/migrations.ts` — `if (!columnNames.includes(...))` guard pattern for safe column additions
+  - `packages/dashboard-web/src/components/accounts/AccountCustomEndpointDialog.tsx` — UI template for the new dialog
