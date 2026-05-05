@@ -451,6 +451,14 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		await this.accounts.setBillingType(accountId, billingType);
 	}
 
+	// FORK PATCH: set per-account OpenRouter provider preference
+	async setAccountOpenrouterProviderPreference(
+		accountId: string,
+		preference: string | null,
+	): Promise<void> {
+		await this.accounts.setOpenrouterProviderPreference(accountId, preference);
+	}
+
 	async updateAccountRequestCount(
 		accountId: string,
 		count: number,

@@ -487,6 +487,16 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Backfilled pause_reason for existing paused accounts");
 		}
 
+		// FORK PATCH: add openrouter_provider_preference for per-account provider.order injection
+		if (
+			!initialAccountsColumnNames.includes("openrouter_provider_preference")
+		) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN openrouter_provider_preference TEXT DEFAULT NULL",
+			).run();
+			log.info("Added openrouter_provider_preference column to accounts table");
+		}
+
 		// Make refresh_token nullable (was NOT NULL, causing API-key providers to need workarounds)
 		const refreshTokenCol = accountsInfo.find(
 			(col) => col.name === "refresh_token",

@@ -162,6 +162,8 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 			cross_region_mode: string | null;
 			model_fallbacks: string | null;
 			billing_type: string | null;
+			// FORK PATCH: JSON string for OpenRouter provider.order preference
+			openrouter_provider_preference: string | null;
 		}>(
 			`
 				SELECT
@@ -192,6 +194,7 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					cross_region_mode,
 					model_fallbacks,
 					billing_type,
+					openrouter_provider_preference,
 					CASE
 						WHEN expires_at > ? THEN 1
 						ELSE 0
@@ -448,6 +451,16 @@ export function createAccountsListHandler(dbOps: DatabaseOperations) {
 					crossRegionMode: account.cross_region_mode,
 					modelFallbacks,
 					billingType: account.billing_type,
+					// FORK PATCH: JSON string for OpenRouter provider.order preference
+					openrouterProviderPreference: (() => {
+						if (!account.openrouter_provider_preference) return null;
+						try {
+							const parsed = JSON.parse(account.openrouter_provider_preference);
+							return Array.isArray(parsed) ? parsed : null;
+						} catch {
+							return null;
+						}
+					})(),
 					sessionStats: sessionStatsMap.get(account.id) ?? null,
 				};
 			}),

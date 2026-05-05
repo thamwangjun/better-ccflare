@@ -17,7 +17,12 @@ import { describe, expect, it } from "bun:test";
 // Force @better-ccflare/core to initialise before @better-ccflare/types resolves its
 // circular dependency (types/agent.ts → core → core/strategy.ts → types/StrategyName).
 import "@better-ccflare/core";
-import { type Account, type AccountRow, toAccount, toAccountResponse } from "../account";
+import {
+	type Account,
+	type AccountRow,
+	toAccount,
+	toAccountResponse,
+} from "../account";
 
 // ---------------------------------------------------------------------------
 // Factories
@@ -83,9 +88,13 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 
 describe("toAccount() — openrouter_provider_preference mapping", () => {
 	it("maps the JSON string from AccountRow to Account", () => {
-		const row = makeRow({ openrouter_provider_preference: '["openai","anthropic"]' });
+		const row = makeRow({
+			openrouter_provider_preference: '["openai","anthropic"]',
+		});
 		const account = toAccount(row);
-		expect(account.openrouter_provider_preference).toBe('["openai","anthropic"]');
+		expect(account.openrouter_provider_preference).toBe(
+			'["openai","anthropic"]',
+		);
 	});
 
 	it("maps undefined (old row) to null", () => {
@@ -97,9 +106,14 @@ describe("toAccount() — openrouter_provider_preference mapping", () => {
 
 describe("toAccountResponse() — openrouterProviderPreference parsing", () => {
 	it("parses a valid JSON array string to string[]", () => {
-		const account = makeAccount({ openrouter_provider_preference: '["openai","anthropic"]' });
+		const account = makeAccount({
+			openrouter_provider_preference: '["openai","anthropic"]',
+		});
 		const response = toAccountResponse(account);
-		expect(response.openrouterProviderPreference).toEqual(["openai", "anthropic"]);
+		expect(response.openrouterProviderPreference).toEqual([
+			"openai",
+			"anthropic",
+		]);
 	});
 
 	it("returns null when openrouter_provider_preference is null", () => {
@@ -109,7 +123,9 @@ describe("toAccountResponse() — openrouterProviderPreference parsing", () => {
 	});
 
 	it("returns null when the JSON string is invalid (try/catch guard)", () => {
-		const account = makeAccount({ openrouter_provider_preference: "not-valid-json{" });
+		const account = makeAccount({
+			openrouter_provider_preference: "not-valid-json{",
+		});
 		const response = toAccountResponse(account);
 		expect(response.openrouterProviderPreference).toBeNull();
 	});

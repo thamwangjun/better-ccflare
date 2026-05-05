@@ -69,10 +69,11 @@ function makeDb(): { db: Database; repo: AccountRepository } {
 }
 
 function insertAccount(db: Database, id: string): void {
-	db.run(
-		`INSERT INTO accounts (id, name, created_at) VALUES (?, ?, ?)`,
-		[id, id, Date.now()],
-	);
+	db.run(`INSERT INTO accounts (id, name, created_at) VALUES (?, ?, ?)`, [
+		id,
+		id,
+		Date.now(),
+	]);
 }
 
 interface RawPreference {
@@ -106,7 +107,10 @@ describe("AccountRepository — openrouter provider preference", () => {
 	describe("setOpenrouterProviderPreference(id, value)", () => {
 		it("persists the JSON string to the DB column", async () => {
 			insertAccount(db, "acc-1");
-			await repo.setOpenrouterProviderPreference("acc-1", '["openai","anthropic"]');
+			await repo.setOpenrouterProviderPreference(
+				"acc-1",
+				'["openai","anthropic"]',
+			);
 			const row = getPreference(db, "acc-1");
 			expect(row.openrouter_provider_preference).toBe('["openai","anthropic"]');
 		});
@@ -115,7 +119,9 @@ describe("AccountRepository — openrouter provider preference", () => {
 	describe("setOpenrouterProviderPreference(id, null)", () => {
 		it("stores NULL in the DB column", async () => {
 			insertAccount(db, "acc-2");
-			db.run("UPDATE accounts SET openrouter_provider_preference = 'old' WHERE id = 'acc-2'");
+			db.run(
+				"UPDATE accounts SET openrouter_provider_preference = 'old' WHERE id = 'acc-2'",
+			);
 			await repo.setOpenrouterProviderPreference("acc-2", null);
 			const row = getPreference(db, "acc-2");
 			expect(row.openrouter_provider_preference).toBeNull();
@@ -125,22 +131,26 @@ describe("AccountRepository — openrouter provider preference", () => {
 	describe("findById — SELECT includes openrouter_provider_preference", () => {
 		it("returns openrouter_provider_preference from the account (not undefined)", async () => {
 			insertAccount(db, "acc-3");
-			db.run("UPDATE accounts SET openrouter_provider_preference = '[\"openai\"]' WHERE id = 'acc-3'");
+			db.run(
+				"UPDATE accounts SET openrouter_provider_preference = '[\"openai\"]' WHERE id = 'acc-3'",
+			);
 			const account = await repo.findById("acc-3");
 			expect(account).not.toBeNull();
-			expect(account!.openrouter_provider_preference).toBe('["openai"]');
+			expect(account?.openrouter_provider_preference).toBe('["openai"]');
 		});
 	});
 
 	describe("findAll — SELECT includes openrouter_provider_preference", () => {
 		it("returns openrouter_provider_preference in list results (not undefined)", async () => {
 			insertAccount(db, "acc-4");
-			db.run("UPDATE accounts SET openrouter_provider_preference = null WHERE id = 'acc-4'");
+			db.run(
+				"UPDATE accounts SET openrouter_provider_preference = null WHERE id = 'acc-4'",
+			);
 			const accounts = await repo.findAll();
 			const acc = accounts.find((a) => a.id === "acc-4");
 			expect(acc).toBeDefined();
 			// openrouter_provider_preference must be null (not undefined) — proves the SELECT list includes it
-			expect(acc!.openrouter_provider_preference).toBeNull();
+			expect(acc?.openrouter_provider_preference).toBeNull();
 		});
 	});
 });
