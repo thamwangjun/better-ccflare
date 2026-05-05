@@ -1,6 +1,6 @@
 # Roadmap: better-ccflare (Personal Fork)
 
-**Updated:** 2026-05-05 (v1.1 roadmap created)
+**Updated:** 2026-05-05 (v1.1 Phase 3 planned)
 
 ## Milestones
 
@@ -39,7 +39,11 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
   2. Account SELECT queries return the preference field alongside existing account fields
   3. Account UPDATE queries persist a preference value and NULL (clear) correctly
   4. All schema, type, repository, and facade changes carry `// FORK PATCH:` annotations
-**Plans**: TBD
+**Plans**: 2 plans
+
+Plans:
+- [ ] 03-01-PLAN.md — Write failing test scaffolds for repository SELECT/UPDATE and type mapper behavior (TDD RED gate)
+- [ ] 03-02-PLAN.md — Implement migration + full type chain + repository + facade (TDD GREEN gate)
 
 ### Phase 4: Cache Extension & Provider Injection
 **Goal**: OpenRouter requests use extended cache breakpoints with correct TTL per block type, and the proxy injects the account's stored provider preference when no provider override is already present in the request
@@ -84,7 +88,7 @@ Phases execute in numeric order: 3 → 4 → 5 → 6
 |-------|-----------|----------------|--------|-----------|
 | 1. Correctness & Patch Hardening | v1.0 | 3/3 | ✅ Complete | 2026-05-04 |
 | 2. Fork Maintenance Tooling | v1.0 | 1/1 | ✅ Complete | 2026-05-05 |
-| 3. Data Model | v1.1 | 0/TBD | Not started | - |
+| 3. Data Model | v1.1 | 0/2 | Not started | - |
 | 4. Cache Extension & Provider Injection | v1.1 | 0/TBD | Not started | - |
 | 5. API Layer | v1.1 | 0/TBD | Not started | - |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 0/TBD | Not started | - |
