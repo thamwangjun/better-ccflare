@@ -8,6 +8,15 @@ A maintained personal fork of [better-ccflare](https://github.com/tombii/better-
 
 Stay current with upstream while running a stable personal instance enhanced with features I need — primarily around OpenRouter caching, provider selection, and a clean patch workflow.
 
+## Current Milestone: v1.1 Extended caching for openrouter models
+
+**Goal:** Extend OpenRouter cache injection to the full 4-breakpoint limit, add long-TTL cache support for agentic sessions, and enable per-account OpenRouter provider preferences.
+
+**Target features:**
+- Extended cache breakpoints — add the 4th (high-token user message) to reach the full Anthropic cache breakpoint limit
+- 1-hour TTL cache blocks — for agentic sessions exceeding the 5-min sticky routing window
+- Per-account provider preference — ENV var + Dashboard UI to set a default OpenRouter provider per account
+
 ## Requirements
 
 ### Validated
@@ -21,11 +30,14 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 ### Active
 
-- [ ] Per-request OpenRouter provider selection (`x-better-ccflare-openrouter-provider` header → `provider.order` injection)
-- [ ] Per-account OpenRouter provider preference via ENV var
-- [ ] Dashboard UI for per-account OpenRouter provider preference
-- [ ] Extended cache breakpoints (up to 4-breakpoint limit — system + high-token user message)
-- [ ] 1-hour TTL on cache blocks for agentic sessions exceeding the 5-minute sticky routing window
+- [ ] Extended cache breakpoints (up to 4-breakpoint limit — system + high-token user message) — v1.1
+- [ ] 1-hour TTL on cache blocks for agentic sessions exceeding the 5-minute sticky routing window — v1.1
+- [ ] Per-account OpenRouter provider preference via ENV var — v1.1
+- [ ] Dashboard UI for per-account OpenRouter provider preference — v1.1
+
+### Future
+
+- [ ] Per-request OpenRouter provider selection (`x-better-ccflare-openrouter-provider` header → `provider.order` injection) — deferred from v1.1
 
 ### Out of Scope
 
@@ -92,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-05 after v1.0 milestone*
+*Last updated: 2026-05-05 — v1.1 milestone started*

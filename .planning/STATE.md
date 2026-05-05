@@ -1,10 +1,10 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.1
-milestone_name: TBD
-current_phase: none
-status: milestone_complete
-last_updated: "2026-05-05"
+milestone_name: Extended caching for openrouter models
+status: planning
+last_updated: "2026-05-05T08:48:43.027Z"
+last_activity: 2026-05-05
 progress:
   total_phases: 0
   completed_phases: 0
@@ -80,3 +80,10 @@ Items acknowledged and deferred at milestone close on 2026-05-05:
 ## Session Continuity
 
 **v1.0 archived.** To start v1.1: run `/gsd-new-milestone` for questioning → research → requirements → roadmap.
+
+## Current Position
+
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-05-05 — Milestone v1.1 started
