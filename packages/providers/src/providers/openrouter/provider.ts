@@ -36,6 +36,7 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		return `${baseUrl}${cleanPathname}${search}`;
 	}
 
+	// FORK PATCH: 3-breakpoint cache_control injection (tools, system, last assistant turn)
 	override async transformRequestBody(
 		request: Request,
 		account?: Account,
@@ -115,6 +116,7 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		return mapped;
 	}
 
+	// FORK PATCH: extractUsageInfo reads OpenRouter prompt_tokens_details format (CACHE-01)
 	// CACHE-01: Override extractUsageInfo to read OpenRouter's prompt_tokens_details format.
 	// BaseAnthropicCompatibleProvider.extractUsageInfo() reads cache_creation_input_tokens
 	// (Anthropic-native field), which OpenRouter does not return. OpenRouter non-streaming

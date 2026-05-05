@@ -70,13 +70,17 @@ git merge --continue
 // FORK PATCH: cache_write_tokens from prompt_tokens_details (OpenRouter)
 ```
 
-**Resolution rule:** When upstream modifies `extractUsageInfo()` or its return type, always preserve the `|| promptTokensDetails?.cache_write_tokens || 0` fallback. Take upstream's version of the function and re-insert the `cache_write_tokens` fallback on the `cacheCreationInputTokens` assignment line. The final line should look like:
+**Resolution rule:** When upstream modifies `extractUsageInfo()` or its return type, always preserve the `|| promptTokensDetails?.cache_write_tokens || 0` fallback. Take upstream's version of the function and re-insert the `cache_write_tokens` fallback on the `cacheCreationInputTokens` assignment. The final declaration should look like:
 
 ```typescript
-cacheCreationInputTokens: usage?.cache_creation_input_tokens ?? promptTokensDetails?.cache_creation_tokens ?? promptTokensDetails?.cache_write_tokens ?? 0,
+// FORK PATCH: cache_write_tokens from prompt_tokens_details (OpenRouter)
+const cacheCreationInputTokens =
+    promptTokensDetails?.cache_creation_input_tokens ||
+    promptTokensDetails?.cache_write_tokens ||
+    0;
 ```
 
-Preserve the `// FORK PATCH` comment immediately before this line.
+Preserve the `// FORK PATCH` comment immediately before this declaration.
 
 ### packages/providers/src/providers/openrouter/provider.ts
 
@@ -88,8 +92,8 @@ Preserve the `// FORK PATCH` comment immediately before this line.
 
 **FORK PATCH comment to look for:**
 ```
-// fix: normalize Authorization header comparison
-// fix: strip /v1 prefix
+// FORK PATCH: 3-breakpoint cache_control injection (tools, system, last assistant turn)
+// FORK PATCH: extractUsageInfo reads OpenRouter prompt_tokens_details format (CACHE-01)
 ```
 
 **Resolution rule:** Upstream's changes to this file are almost certainly additive (a new method or property on the OpenRouter provider class). Preserve the entire fork implementation. Add upstream's new method or property alongside the fork's additions. Do NOT overwrite the fork's version with upstream's 31-line version.
