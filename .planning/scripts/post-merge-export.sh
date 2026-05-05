@@ -41,7 +41,7 @@ PATCH_FILES=()
 while IFS= read -r f; do PATCH_FILES+=("$f"); done < <(ls "${PATCHES_DIR}"/*.patch 2>/dev/null | sort)
 
 COMMITS=()
-while IFS= read -r c; do COMMITS+=("$c"); done < <(
+while IFS= read -r c || [[ -n "$c" ]]; do COMMITS+=("$c"); done < <(
   git log --no-merges --reverse --pretty=format:"%h|%s" upstream/main..thamw-main
 )
 
