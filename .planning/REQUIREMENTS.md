@@ -51,12 +51,12 @@
 
 | REQ-ID | Phase | Status |
 |--------|-------|--------|
-| CACHE-03 | — | pending |
-| CACHE-04 | — | pending |
-| CACHE-05 | — | pending |
-| PROV-01 | — | pending |
-| PROV-02 | — | pending |
-| PROV-03 | — | pending |
-| PROV-04 | — | pending |
-| MAINT-04 | — | pending |
-| MAINT-05 | — | pending |
+| CACHE-03 | Phase 4 | Pending |
+| CACHE-04 | Phase 4 | Pending |
+| CACHE-05 | Phase 4 | Pending |
+| PROV-01 | Phase 4 | Pending |
+| PROV-02 | Phase 3 | Pending |
+| PROV-03 | Phase 5 | Pending |
+| PROV-04 | Phase 6 | Pending |
+| MAINT-04 | Phase 6 | Pending |
+| MAINT-05 | Phase 6 | Pending |

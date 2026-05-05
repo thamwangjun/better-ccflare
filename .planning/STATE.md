@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Extended caching for openrouter models
 status: planning
-last_updated: "2026-05-05T08:48:43.027Z"
+last_updated: "2026-05-05T09:00:00.000Z"
 last_activity: 2026-05-05
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -15,75 +15,65 @@ progress:
 
 # Project State
 
-**Project:** better-ccflare (Personal Fork)
-**v1.0 Shipped:** 2026-05-05
-**Current Phase:** None — planning next milestone
-
-## Phase Status
-
-| Phase | Name | Status |
-|-------|------|--------|
-| 1 | Correctness & Patch Hardening | ✅ Complete |
-| 2 | Fork Maintenance Tooling | ✅ Complete |
-
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-05-05 after v1.0 milestone)
+See: `.planning/PROJECT.md` (updated 2026-05-05)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Planning v1.1 — run `/gsd-new-milestone` to define scope
-
-## Deferred Items
-
-Items acknowledged and deferred at milestone close on 2026-05-05:
-
-| Category | Item | Status |
-|----------|------|--------|
-| tech_debt | SC-2 (CACHE-02): Live non-Anthropic model request test | Deferred — human verification required |
-| tech_debt | REQUIREMENTS.md CACHE-02 wording mismatch | Deferred — cosmetic only |
-| tech_debt | Phase 2 missing VERIFICATION.md | Deferred — artifact gap only |
-
-## Performance Metrics
-
-| Metric | Value |
-|--------|-------|
-| Phases completed | 2 / 2 |
-| Requirements delivered | 7 / 7 |
-| Plans completed | 4 |
-
-## Key Constraints
-
-- Never test via `claude` account or direct Anthropic endpoints — risk of account ban
-- `inline-worker.ts` is auto-generated — never edit directly
-- Version bumps are automated — never bump manually
-- All changes must pass `bun run lint && bun run typecheck && bun run format`
-
-## High-Risk Files (for upstream merges)
-
-- `packages/providers/src/providers/openai/provider.ts` — contains `cache_write_tokens` FORK PATCH (~line 262), upstream actively refactors this file
-- `packages/providers/src/providers/openrouter/provider.ts` — OpenRouter-specific overrides
-- `packages/types/src/account.ts` — shared type file; structural changes here cause cascade conflicts
-
-## Fork Patches on `thamw-main` (v1.0 state)
-
-- `// FORK PATCH:` comment + `cache_write_tokens` extraction from `prompt_tokens_details` (`openai/provider.ts`)
-- OpenRouter `cache_control` ephemeral per-block injection at 3 breakpoints (`openrouter/provider.ts`)
-- 10-test regression suite (`openrouter/__tests__/provider.test.ts`)
-- Pre/post merge scripts + SOP (`.planning/scripts/`, `.planning/fork_plans/UPSTREAM_MERGE.md`)
-
-## Quick Tasks Completed
-
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260505-001 | Fix SOP issues from v1.0 audit | 2026-05-05 | 134f689 | [260505-001-fix-sop-issues](./quick/260505-001-fix-sop-issues/) |
-
-## Session Continuity
-
-**v1.0 archived.** To start v1.1: run `/gsd-new-milestone` for questioning → research → requirements → roadmap.
+**Current focus:** Phase 3 — Data Model (ready to plan)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-05-05 — Milestone v1.1 started
+Phase: 3 of 6 (Data Model)
+Plan: — of —
+Status: Ready to plan
+Last activity: 2026-05-05 — v1.1 roadmap created (4 phases, 9 requirements mapped)
+
+Progress: [░░░░░░░░░░] 0%
+
+## Performance Metrics
+
+**Velocity:**
+- Total plans completed: 4 (v1.0)
+- Average duration: —
+- Total execution time: —
+
+**By Phase:**
+
+| Phase | Plans | Total | Avg/Plan |
+|-------|-------|-------|----------|
+| v1.0 Phase 1 | 3 | — | — |
+| v1.0 Phase 2 | 1 | — | — |
+
+**Recent Trend:**
+- Last 5 plans: —
+- Trend: —
+
+*Updated after each plan completion*
+
+## Accumulated Context
+
+### Decisions
+
+Decisions are logged in PROJECT.md Key Decisions table.
+Recent decisions affecting current work:
+
+- Phase 3 first: PROV-02 (schema migration) must land before PROV-01 can read the preference field and before PROV-03 can write it via API
+- Phases 4+5 can plan in parallel (no cross-dependency), but Phase 5 depends on Phase 3 schema; Phase 4 also depends on Phase 3
+- Phase 6 depends on Phase 5 (API endpoint must exist before UI can call it)
+- MAINT-05 is a cross-cutting practice enforced throughout — assigned to Phase 6 as a completion gate, not a standalone phase
+
+### Pending Todos
+
+None yet.
+
+### Blockers/Concerns
+
+- v1.0 deferred: live non-Anthropic model request test (SC-2 / CACHE-02) — human verification still needed before v1.1 closes
+- Pre-existing 27 Biome lint errors in dashboard React components (unrelated to fork patches) — do not fix unless Phase 6 work touches those files
+
+## Session Continuity
+
+Last session: 2026-05-05
+Stopped at: Roadmap created — 4 phases (3–6), 9/9 requirements mapped, files written
+Resume file: None
