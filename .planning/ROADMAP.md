@@ -45,7 +45,11 @@ Plans:
 2. After each upstream merge, a git tag in the form `merged-upstream-YYYYMMDD` exists and `git tag --list "merged-upstream-*"` returns it
 3. After each upstream merge, `.planning/patches/` contains exported patch files representing the current fork delta, recoverable without knowledge of which commits are fork-only
 
-**Plans:** TBD
+**Plans:** 1 plan
+
+Plans:
+- [ ] 02-01-PLAN.md — Create pre-merge-check.sh (MAINT-01), post-merge-export.sh (MAINT-02, MAINT-03), package.json aliases, and UPSTREAM_MERGE.md agent SOP
+
 **UI hint:** no
 
 ---
@@ -71,4 +75,4 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Correctness & Patch Hardening | 0/3 | Not started | - |
-| 2. Fork Maintenance Tooling | 0/0 | Not started | - |
+| 2. Fork Maintenance Tooling | 0/1 | Not started | - |
