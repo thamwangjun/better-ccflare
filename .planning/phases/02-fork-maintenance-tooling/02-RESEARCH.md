@@ -520,7 +520,7 @@ This phase creates local shell scripts and documentation. No application code ch
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Should post-merge-export.sh clear old patches before exporting?**
    - What we know: MANIFEST.md is designed to reflect the current delta, not accumulate history. The context says MANIFEST is "regenerated on each post-merge run."
