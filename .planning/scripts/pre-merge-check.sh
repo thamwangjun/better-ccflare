@@ -14,6 +14,9 @@ HIGH_RISK_FILES=(
   "packages/types/src/account.ts"
 )
 
+# IN-01: Personal fork branch name — change here if renamed
+FORK_BRANCH="thamw-main"
+
 for file in "${HIGH_RISK_FILES[@]}"; do
   echo "======================================================"
   echo "FILE: ${file}"
@@ -22,6 +25,6 @@ for file in "${HIGH_RISK_FILES[@]}"; do
   git diff upstream/main -- "${file}"
   echo ""
   echo "FORK COMMITS TOUCHING THIS FILE:"
-  git log --oneline upstream/main..thamw-main -- "${file}"
+  git log --oneline "upstream/main..${FORK_BRANCH}" -- "${file}"
   echo ""
 done
