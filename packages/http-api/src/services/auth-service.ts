@@ -4,6 +4,7 @@ import {
 	type ApiKeyRole,
 	NodeCryptoUtils,
 } from "@better-ccflare/types";
+import { extractApiKey } from "./extract-api-key";
 
 export interface AuthenticationResult {
 	isAuthenticated: boolean;
@@ -113,26 +114,8 @@ export class AuthService {
 		return { authorized: true };
 	}
 
-	/**
-	 * Extract API key from request headers
-	 */
 	extractApiKey(req: Request): string | null {
-		// Check x-api-key header first (Anthropic format)
-		const apiKey = req.headers.get("x-api-key");
-		if (apiKey) {
-			return apiKey;
-		}
-
-		// Check Authorization header with Bearer token
-		const authHeader = req.headers.get("authorization");
-		if (authHeader) {
-			const parts = authHeader.trim().split(/\s+/);
-			if (parts.length === 2 && parts[0].toLowerCase() === "bearer") {
-				return parts[1];
-			}
-		}
-
-		return null;
+		return extractApiKey(req);
 	}
 
 	/**
@@ -147,6 +130,13 @@ export class AuthService {
 
 		// OAuth endpoints are exempt (needed for account setup)
 		if (path.startsWith("/api/oauth")) {
+			return true;
+		}
+
+		// Version check returns only the latest npm-published version. The
+		// dashboard's sidebar tile fires this on load with no API key in
+		// headers, so it must be reachable whether or not auth is enabled.
+		if (path === "/api/version/check") {
 			return true;
 		}
 

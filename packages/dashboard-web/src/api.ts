@@ -42,8 +42,37 @@ export interface AgentsResponse {
 	agents: Agent[];
 	globalAgents: Agent[];
 	workspaceAgents: Agent[];
+	pluginAgents: Agent[];
 	workspaces: AgentWorkspace[];
 }
+
+export interface StorageInfoResponse {
+	db_bytes: number;
+	wal_bytes: number;
+	integrity_status: "ok" | "corrupt" | "unchecked" | "running";
+	integrity_running_kind: "quick" | "full" | null;
+	last_integrity_check_at: string | null;
+	last_integrity_error: string | null;
+	last_quick_check_at: string | null;
+	last_quick_result: "ok" | "corrupt" | null;
+	last_full_check_at: string | null;
+	last_full_result: "ok" | "corrupt" | null;
+	orphan_pages: number | null;
+	last_retention_sweep_at: string | null;
+	null_account_rows_24h: number;
+}
+
+/**
+ * Response from `POST /api/storage/integrity/check`.
+ *
+ * `quick` runs synchronously, so the response carries the verdict inline.
+ * `full` is fire-and-forget — server returns 202 with `queued: true` and
+ * the result lands in `/api/storage` once the worker completes. The
+ * dashboard's storage poll picks it up on its next tick.
+ */
+export type IntegrityCheckResponse =
+	| { kind: "quick"; result: "ok" | "corrupt"; error: string | null }
+	| { kind: "full"; queued: true };
 
 // Token health response interfaces
 export interface TokenHealthResponse {
@@ -166,14 +195,20 @@ class API extends HttpClient {
 		}
 	}
 
-	async getStats(): Promise<Stats> {
+	async getStats(opts?: {
+		errorsSinceHours?: number;
+	}): Promise<StatsWithAccounts> {
 		const startTime = Date.now();
-		const url = "/api/stats";
+		const hours = opts?.errorsSinceHours;
+		const url =
+			typeof hours === "number" && Number.isFinite(hours) && hours > 0
+				? `/api/stats?errorsSinceHours=${hours}`
+				: "/api/stats";
 
 		this.logger.debug(`→ GET ${url}`);
 
 		try {
-			const response = await this.get<Stats>(url);
+			const response = await this.get<StatsWithAccounts>(url);
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
 			return response;
@@ -224,7 +259,8 @@ class API extends HttpClient {
 			| "openrouter"
 			| "alibaba-coding-plan"
 			| "codex"
-			| "qwen";
+			| "qwen"
+			| "ollama";
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
@@ -626,6 +662,70 @@ class API extends HttpClient {
 		}
 	}
 
+	async addOllamaAccount(data: {
+		name: string;
+		priority: number;
+		customEndpoint?: string;
+		modelMappings?: { [key: string]: string };
+	}): Promise<{ message: string; account: Account }> {
+		const startTime = Date.now();
+		const url = "/api/accounts/ollama";
+
+		this.logger.debug(`→ POST ${url}`, { data });
+
+		try {
+			const response = await this.post<{ message: string; account: Account }>(
+				url,
+				data,
+			);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async addOllamaCloudAccount(data: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}): Promise<{ message: string; account: Account }> {
+		const startTime = Date.now();
+		const url = "/api/accounts/ollama-cloud";
+
+		this.logger.debug(`→ POST ${url}`, { data });
+
+		try {
+			const response = await this.post<{ message: string; account: Account }>(
+				url,
+				data,
+			);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async removeAccount(name: string, confirm: string): Promise<void> {
 		const startTime = Date.now();
 		const url = `/api/accounts/${name}`;
@@ -722,6 +822,27 @@ class API extends HttpClient {
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
 			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
+	async getRequestPayload(id: string): Promise<RequestPayload> {
+		const startTime = Date.now();
+		const url = `/api/requests/payload/${encodeURIComponent(id)}`;
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<Omit<RequestPayload, "id">>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return { id, ...response };
 		} catch (error) {
 			const duration = Date.now() - startTime;
 			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
@@ -1584,6 +1705,56 @@ class API extends HttpClient {
 		}
 	}
 
+	async getUsageThrottling(): Promise<{
+		fiveHourEnabled: boolean;
+		weeklyEnabled: boolean;
+	}> {
+		const startTime = Date.now();
+		const url = "/api/config/usage-throttling";
+
+		this.logger.debug(`→ GET ${url}`);
+
+		try {
+			const response = await this.get<{
+				fiveHourEnabled: boolean;
+				weeklyEnabled: boolean;
+			}>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
+	async setUsageThrottling(settings: {
+		fiveHourEnabled: boolean;
+		weeklyEnabled: boolean;
+	}): Promise<void> {
+		const startTime = Date.now();
+		const url = "/api/config/usage-throttling";
+
+		this.logger.debug(`→ POST ${url}`, settings);
+
+		try {
+			await this.post(url, settings);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			throw error;
+		}
+	}
+
 	async cleanupNow(): Promise<{
 		removedRequests: number;
 		removedPayloads: number;
@@ -1613,43 +1784,6 @@ class API extends HttpClient {
 					rowCount: number;
 					dataBytes?: number;
 				}>;
-			}>(url, undefined, { timeout: 10 * 60 * 1000 });
-			const duration = Date.now() - startTime;
-			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
-			return response;
-		} catch (error) {
-			const duration = Date.now() - startTime;
-			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
-				error: error instanceof Error ? error.message : String(error),
-				stack: error instanceof Error ? error.stack : undefined,
-			});
-			throw error;
-		}
-	}
-
-	async compactDb(): Promise<{
-		ok: boolean;
-		error?: string;
-		walCheckpointed?: number;
-		walBusy?: number;
-		walLog?: number;
-		walTruncateBusy?: number;
-		vacuumed?: boolean;
-	}> {
-		const startTime = Date.now();
-		const url = "/api/maintenance/compact";
-
-		this.logger.debug(`→ POST ${url}`);
-
-		try {
-			const response = await this.post<{
-				ok: boolean;
-				error?: string;
-				walCheckpointed?: number;
-				walBusy?: number;
-				walLog?: number;
-				walTruncateBusy?: number;
-				vacuumed?: boolean;
 			}>(url, undefined, { timeout: 10 * 60 * 1000 });
 			const duration = Date.now() - startTime;
 			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
@@ -1972,6 +2106,15 @@ class API extends HttpClient {
 		}
 	}
 
+	async updateAccountPeakHoursPause(
+		accountId: string,
+		enabled: boolean,
+	): Promise<void> {
+		await this.post(`/api/accounts/${accountId}/peak-hours-pause`, {
+			enabled: enabled ? 1 : 0,
+		});
+	}
+
 	async getQwenAuthStatus(
 		sessionId: string,
 	): Promise<{ status: "pending" | "complete" | "error"; error?: string }> {
@@ -1987,6 +2130,44 @@ class API extends HttpClient {
 		} catch (error) {
 			this.logger.error(`✗ GET ${url} - ERROR`, { error });
 			if (error instanceof HttpError) throw new Error(error.message);
+			throw error;
+		}
+	}
+
+	async getStorageInfo(): Promise<StorageInfoResponse> {
+		const startTime = Date.now();
+		const url = "/api/storage";
+		this.logger.debug(`→ GET ${url}`);
+		try {
+			const response = await this.get<StorageInfoResponse>(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← GET ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ GET ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+			});
+			throw error;
+		}
+	}
+
+	async triggerIntegrityCheck(
+		kind: "quick" | "full",
+	): Promise<IntegrityCheckResponse> {
+		const startTime = Date.now();
+		const url = "/api/storage/integrity/check";
+		this.logger.debug(`→ POST ${url}`, { kind });
+		try {
+			const response = await this.post<IntegrityCheckResponse>(url, { kind });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← POST ${url} - 200 (${duration}ms)`);
+			return response;
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ POST ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+			});
 			throw error;
 		}
 	}
@@ -2013,15 +2194,6 @@ class API extends HttpClient {
 			});
 			throw error;
 		}
-	}
-
-	async updateAccountPeakHoursPause(
-		accountId: string,
-		enabled: boolean,
-	): Promise<void> {
-		await this.post(`/api/accounts/${accountId}/peak-hours-pause`, {
-			enabled: enabled ? 1 : 0,
-		});
 	}
 }
 

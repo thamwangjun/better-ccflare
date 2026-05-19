@@ -105,13 +105,13 @@ export class AutoRefreshScheduler {
 				return;
 			}
 
-			await this.checkPeakHoursPause();
-
 			const now = Date.now();
 
 			// Periodically clean up the tracking map - remove entries for accounts that no longer exist
 			// or have auto-refresh disabled
 			await this.cleanupTracking();
+
+			await this.checkPeakHoursPause();
 
 			// Get all accounts with auto-refresh enabled that have reset windows OR need immediate refresh
 			const accounts = await this.db.query<{
@@ -143,6 +143,14 @@ export class AutoRefreshScheduler {
 						OR rate_limit_reset IS NULL
 						OR rate_limit_reset < (? - 24 * 60 * 60 * 1000)
 					)
+					-- Skip accounts that are still inside an active per-account cooldown.
+					-- ccflare already knows upstream will reject us until rate_limited_until,
+					-- so probing during that window is a guaranteed-fail call that wastes
+					-- quota, re-applies the same cooldown, and pollutes the request log
+					-- with synthetic 503s (issue #199, bug 1).
+					AND (
+						rate_limited_until IS NULL OR rate_limited_until <= ?
+					)
 					-- Exclude accounts that are paused for reasons other than overage (e.g. manually
 					-- paused zai/codex accounts, or accounts paused by the failure-threshold guard).
 					-- auto_pause_on_overage_enabled defaults to 0 for zai/codex, so a manually-paused
@@ -155,7 +163,7 @@ export class AutoRefreshScheduler {
 						AND COALESCE(auto_pause_on_overage_enabled, 0) = 0
 					)
 			`,
-				[now, now],
+				[now, now, now],
 			);
 
 			log.debug(
@@ -274,6 +282,8 @@ export class AutoRefreshScheduler {
 				last_used: null,
 				created_at: 0,
 				rate_limited_until: null,
+				rate_limited_reason: null,
+				rate_limited_at: null,
 				session_start: null,
 				session_request_count: 0,
 				paused: false,
@@ -360,6 +370,13 @@ export class AutoRefreshScheduler {
 				"x-better-ccflare-account-id": account.id,
 				// CRITICAL: Bypass session tracking for auto-refresh messages
 				"x-better-ccflare-bypass-session": "true",
+				// Tag the request as a synthetic auto-refresh probe so downstream
+				// pipeline layers can distinguish it from real user traffic
+				// (cache-body-store skips staging for these, request logging
+				// and pool-exhausted 503 metrics filter them out — issue #199,
+				// bug 2). Mirrors the existing x-better-ccflare-keepalive
+				// pattern used by cache-keepalive-scheduler.ts.
+				"x-better-ccflare-auto-refresh": "true",
 			});
 
 			// Try sending with multiple models if needed
@@ -748,6 +765,8 @@ export class AutoRefreshScheduler {
 					last_used: null,
 					created_at: 0,
 					rate_limited_until: null,
+					rate_limited_reason: null,
+					rate_limited_at: null,
 					session_start: null,
 					session_request_count: 0,
 					paused: false,
@@ -876,6 +895,8 @@ export class AutoRefreshScheduler {
 					last_used: null,
 					created_at: 0,
 					rate_limited_until: null,
+					rate_limited_reason: null,
+					rate_limited_at: null,
 					session_start: null,
 					session_request_count: 0,
 					paused: false,
@@ -997,21 +1018,41 @@ export class AutoRefreshScheduler {
 	 */
 	private async checkPeakHoursPause(): Promise<void> {
 		const inPeak = isZaiPeakHour();
-		if (inPeak) {
-			// Pause zai accounts that have opted in and aren't already paused
-			const changes = await this.db.runWithChanges(
-				"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE provider = 'zai' AND COALESCE(peak_hours_pause_enabled, 0) = 1 AND COALESCE(paused, 0) = 0",
-			);
-			if (changes > 0) {
-				log.info(`Peak hours: paused ${changes} zai account(s)`);
-			}
-		} else {
-			// Only resume accounts we specifically paused for peak hours
-			const changes = await this.db.runWithChanges(
-				"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE provider = 'zai' AND COALESCE(peak_hours_pause_enabled, 0) = 1 AND COALESCE(paused, 0) = 1 AND pause_reason = 'peak_hours'",
-			);
-			if (changes > 0) {
-				log.info(`Peak hours ended: resumed ${changes} zai account(s)`);
+
+		const zaiAccounts = await this.db.query<{
+			id: string;
+			name: string;
+			paused: number;
+			pause_reason: string | null;
+			peak_hours_pause_enabled: number;
+		}>(
+			`SELECT id, name, COALESCE(paused, 0) as paused, pause_reason, COALESCE(peak_hours_pause_enabled, 0) as peak_hours_pause_enabled
+			 FROM accounts WHERE provider = 'zai' AND peak_hours_pause_enabled = 1`,
+		);
+
+		for (const account of zaiAccounts) {
+			if (inPeak && !account.paused) {
+				// Pause account during peak hours
+				// SQL-level guard prevents race: if another actor paused the account
+				// with a different reason between SELECT and UPDATE, skip it
+				await this.db.run(
+					"UPDATE accounts SET paused = 1, pause_reason = 'peak_hours' WHERE id = ? AND COALESCE(paused, 0) = 0",
+					[account.id],
+				);
+				log.info(`Peak hours pause: paused zai account '${account.name}'`);
+			} else if (
+				!inPeak &&
+				account.paused &&
+				account.pause_reason === "peak_hours"
+			) {
+				// Resume account after peak hours (only if we paused it)
+				// SQL-level guard prevents race condition: if manual-pause API changed pause_reason
+				// between SELECT and UPDATE, this UPDATE will not affect that account
+				await this.db.run(
+					"UPDATE accounts SET paused = 0, pause_reason = NULL WHERE id = ? AND pause_reason = 'peak_hours'",
+					[account.id],
+				);
+				log.info(`Peak hours resume: resumed zai account '${account.name}'`);
 			}
 		}
 	}

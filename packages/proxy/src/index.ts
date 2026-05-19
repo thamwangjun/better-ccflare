@@ -15,8 +15,11 @@ export {
 	checkAllAccountsHealth,
 	checkRefreshTokenHealth,
 	clearAccountRefreshCache,
+	createUsageThrottledResponse,
 	formatTokenHealthReport,
 	getAccountsNeedingReauth,
+	getUsageThrottleStatus,
+	getUsageThrottleUntil,
 	getValidAccessToken,
 	isRefreshTokenLikelyExpired,
 	registerPollingRestarter,
@@ -27,6 +30,11 @@ export {
 	type TokenHealthReport,
 	type TokenHealthStatus,
 } from "./handlers";
+export {
+	runIntegrityCheckOnDemand,
+	startFullIntegrityCheckBackground,
+	startIntegrityScheduler,
+} from "./integrity-scheduler";
 export {
 	getUsageWorker,
 	getUsageWorkerHealth,

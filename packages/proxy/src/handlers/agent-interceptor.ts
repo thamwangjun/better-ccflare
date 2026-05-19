@@ -6,6 +6,7 @@ import type { DatabaseOperations } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { validatePath } from "@better-ccflare/security";
 import type { Agent } from "@better-ccflare/types";
+import { RequestBodyContext } from "../request-body-context";
 
 const log = new Logger("AgentInterceptor");
 
@@ -23,9 +24,15 @@ export interface AgentInterceptResult {
  * @returns Modified request body and agent detection information
  */
 export async function interceptAndModifyRequest(
-	requestBodyBuffer: ArrayBuffer | null,
+	requestBody: ArrayBuffer | RequestBodyContext | null,
 	dbOps: DatabaseOperations,
 ): Promise<AgentInterceptResult> {
+	const bodyContext =
+		requestBody instanceof RequestBodyContext
+			? requestBody
+			: new RequestBodyContext(requestBody);
+	const requestBodyBuffer = bodyContext.getBuffer();
+
 	// If no body, nothing to intercept
 	if (!requestBodyBuffer) {
 		return {
@@ -37,18 +44,20 @@ export async function interceptAndModifyRequest(
 	}
 
 	try {
-		// Parse the request body
-		const bodyText = new TextDecoder().decode(requestBodyBuffer);
-		const requestBody = JSON.parse(bodyText);
+		const parsedBody = bodyContext.getParsedJson();
+		if (!parsedBody) {
+			throw new Error("Request body is not valid JSON object");
+		}
 
 		// Extract original model
-		const originalModel = requestBody.model || null;
+		const originalModel =
+			typeof parsedBody.model === "string" ? parsedBody.model : null;
 
 		// Extract system prompt to detect agent usage
-		const systemPrompt = extractSystemPrompt(requestBody);
+		const systemPrompt = extractSystemPrompt(parsedBody as RequestBody);
 		if (!systemPrompt) {
 			// No system prompt, no agent detection possible
-			log.info("No system prompt found in request");
+			log.debug("No system prompt found in request");
 			return {
 				modifiedBody: requestBodyBuffer,
 				agentUsed: null,
@@ -58,9 +67,9 @@ export async function interceptAndModifyRequest(
 		}
 
 		// Register additional agent directories from system prompt
-		log.info(`System prompt length: ${systemPrompt.length} chars`);
+		log.debug(`System prompt length: ${systemPrompt.length} chars`);
 		if (systemPrompt.includes("CLAUDE.md")) {
-			log.info("System prompt contains CLAUDE.md reference");
+			log.debug("System prompt contains CLAUDE.md reference");
 
 			// Look specifically for the Contents pattern
 			if (systemPrompt.includes("Contents of")) {
@@ -68,7 +77,7 @@ export async function interceptAndModifyRequest(
 				const start = contentsIndex;
 				const end = Math.min(systemPrompt.length, contentsIndex + 200);
 				const sample = systemPrompt.substring(start, end);
-				log.info(`Found 'Contents of' pattern: ${sample}`);
+				log.debug(`Found 'Contents of' pattern: ${sample}`);
 			} else {
 				log.debug("System prompt does NOT contain 'Contents of' pattern");
 				// Show a sample of what we do have
@@ -85,12 +94,12 @@ export async function interceptAndModifyRequest(
 		}
 
 		const extraDirs = extractAgentDirectories(systemPrompt);
-		log.info(
-			`Found ${extraDirs.length} potential agent directories in system prompt`,
+		log.debug(
+			`Validated ${extraDirs.length} agent directories from system prompt`,
 		);
 
 		for (const dir of extraDirs) {
-			log.info(`Checking potential workspace from agents directory: ${dir}`);
+			log.debug(`Checking potential workspace from agents directory: ${dir}`);
 			// Extract workspace path from agents directory
 			// Convert /path/to/project/.claude/agents to /path/to/project
 			const workspacePath = dir.replace(/\/.claude\/agents$/, "");
@@ -100,7 +109,7 @@ export async function interceptAndModifyRequest(
 				await agentRegistry.registerWorkspace(workspacePath);
 				log.info(`Registered workspace: ${workspacePath}`);
 			} else {
-				log.info(`Workspace path does not exist: ${workspacePath}`);
+				log.debug(`Workspace path does not exist: ${workspacePath}`);
 			}
 		}
 
@@ -140,17 +149,10 @@ export async function interceptAndModifyRequest(
 
 		// Modify the request body with the preferred model
 		log.info(`Modifying model from ${originalModel} to ${preferredModel}`);
-		requestBody.model = preferredModel;
-
-		// Convert back to buffer
-		const modifiedBodyText = JSON.stringify(requestBody);
-		const encodedData = new TextEncoder().encode(modifiedBodyText);
-		// Create a new ArrayBuffer to ensure compatibility
-		const modifiedBody = new ArrayBuffer(encodedData.byteLength);
-		new Uint8Array(modifiedBody).set(encodedData);
+		bodyContext.setModel(preferredModel);
 
 		return {
-			modifiedBody,
+			modifiedBody: bodyContext.getBuffer(),
 			agentUsed: detectedAgent.id,
 			originalModel,
 			appliedModel: preferredModel,
@@ -203,15 +205,15 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 
 	// First check for system field at root level (Claude Code pattern)
 	if (requestBody.system) {
-		extractLog.info("Found system field at root level");
+		extractLog.debug("Found system field at root level");
 		if (typeof requestBody.system === "string") {
-			extractLog.info(
+			extractLog.debug(
 				`System field is string, length: ${requestBody.system.length}`,
 			);
 			allSystemContent.push(requestBody.system);
 		}
 		if (Array.isArray(requestBody.system)) {
-			extractLog.info(
+			extractLog.debug(
 				`System field is array with ${requestBody.system.length} items`,
 			);
 			// Concatenate all text from system messages
@@ -221,7 +223,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 				)
 				.map((item) => item.text)
 				.join("\n");
-			extractLog.info(`Extracted system text length: ${systemText.length}`);
+			extractLog.debug(`Extracted system text length: ${systemText.length}`);
 			if (systemText) {
 				allSystemContent.push(systemText);
 			}
@@ -230,7 +232,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 
 	// Then check messages array
 	if (requestBody.messages && Array.isArray(requestBody.messages)) {
-		extractLog.info(
+		extractLog.debug(
 			`Checking messages array with ${requestBody.messages.length} messages`,
 		);
 
@@ -240,15 +242,15 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 		);
 
 		if (systemMessage) {
-			extractLog.info("Found system role message");
+			extractLog.debug("Found system role message");
 			if (typeof systemMessage.content === "string") {
-				extractLog.info(
+				extractLog.debug(
 					`System message content is string, length: ${systemMessage.content.length}`,
 				);
 				allSystemContent.push(systemMessage.content);
 			}
 			if (Array.isArray(systemMessage.content)) {
-				extractLog.info(
+				extractLog.debug(
 					`System message content is array with ${systemMessage.content.length} items`,
 				);
 				const systemText = systemMessage.content
@@ -258,7 +260,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 					)
 					.map((item) => item.text)
 					.join("\n");
-				extractLog.info(
+				extractLog.debug(
 					`Extracted system message text length: ${systemText.length}`,
 				);
 				if (systemText) {
@@ -266,7 +268,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 				}
 			}
 		} else {
-			extractLog.info("No system role message found, checking user messages");
+			extractLog.debug("No system role message found, checking user messages");
 		}
 
 		// Also check for system prompt in user messages
@@ -279,7 +281,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 					item.type === "text" && !!item.text,
 			);
 
-			extractLog.info(
+			extractLog.debug(
 				`Found ${textContents.length} text content items in user message`,
 			);
 
@@ -289,7 +291,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 				allUserText.includes("Contents of") &&
 				allUserText.includes("CLAUDE.md")
 			) {
-				extractLog.info(
+				extractLog.debug(
 					"User message contains 'Contents of' and 'CLAUDE.md' - including in system prompt",
 				);
 				allSystemContent.push(allUserText);
@@ -299,7 +301,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 				userMessage.content.includes("Contents of") &&
 				userMessage.content.includes("CLAUDE.md")
 			) {
-				extractLog.info(
+				extractLog.debug(
 					"User message string contains 'Contents of' and 'CLAUDE.md' - including in system prompt",
 				);
 				allSystemContent.push(userMessage.content);
@@ -310,7 +312,7 @@ function extractSystemPrompt(requestBody: RequestBody): string | null {
 	// Combine all system content
 	if (allSystemContent.length > 0) {
 		const combined = allSystemContent.join("\n\n");
-		extractLog.info(
+		extractLog.debug(
 			`Combined system prompt length: ${combined.length} from ${allSystemContent.length} sources`,
 		);
 		return combined;
@@ -391,11 +393,22 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 	// Regex #2: Look for repo root pattern "Contents of (.*?)/CLAUDE.md"
 	const repoRootRegex = /Contents of ([^\n]+?)\/CLAUDE\.md/g;
 	const repoRootMatches = systemPrompt.matchAll(repoRootRegex);
+	const homeClaudeDir = join(homedir(), ".claude");
 	for (const match of repoRootMatches) {
 		const repoRoot = match[1];
 
 		// Clean up any escaped slashes and construct agents directory first
 		const cleanedRoot = repoRoot.replace(/\\\//g, "/");
+
+		// ~/.claude/CLAUDE.md is the user's global Claude Code config, not a
+		// project repo root. Global agents at ~/.claude/agents are loaded
+		// unconditionally by AgentRegistry.loadAgents() via getAgentsDirectory(),
+		// so constructing ~/.claude/.claude/agents here would only produce a
+		// non-existent path and a noisy security-validation warning.
+		if (cleanedRoot === homeClaudeDir) {
+			continue;
+		}
+
 		const agentsDir = join(cleanedRoot, ".claude", "agents");
 
 		// Validate the constructed agents directory directly
@@ -403,7 +416,7 @@ function extractAgentDirectories(systemPrompt: string): string[] {
 		// SECURITY NOTE: This is a deliberate decision to allow Claude Code to access agents in ~/.claude directory.
 		// The path validation system was restricting access to ~/.claude/.claude/agents which is needed for proper agent functionality.
 		// This addition maintains security by only allowing this specific path while keeping all other restrictions in place.
-		const additionalAllowedPaths = [join(homedir(), ".claude")];
+		const additionalAllowedPaths = [homeClaudeDir];
 		processPath(
 			agentsDir,
 			"constructed agents directory from CLAUDE.md",

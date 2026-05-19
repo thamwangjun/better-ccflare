@@ -1,5 +1,8 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { ensureSchema, runMigrations } from "../src/migrations";
 
 describe("Database Migrations - Tier Column Removal", () => {
@@ -302,6 +305,57 @@ describe("Database Migrations - Tier Column Removal", () => {
 		const claudeSession = sessions.find((s) => s.id === "session-claude");
 		expect(claudeSession).toBeDefined();
 		expect(claudeSession?.mode).toBe("claude-oauth"); // Should remain unchanged
+	});
+
+	describe("Rate Limit Audit Trail Migration (issue #178)", () => {
+		it("adds rate_limited_reason TEXT column to accounts table", () => {
+			ensureSchema(db);
+			runMigrations(db);
+
+			const columns = db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+				type: string;
+			}>;
+			const col = columns.find((c) => c.name === "rate_limited_reason");
+
+			expect(col).toBeDefined();
+			expect(col?.type.toUpperCase()).toBe("TEXT");
+		});
+
+		it("adds rate_limited_at INTEGER column to accounts table", () => {
+			ensureSchema(db);
+			runMigrations(db);
+
+			const columns = db.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+				type: string;
+			}>;
+			const col = columns.find((c) => c.name === "rate_limited_at");
+
+			expect(col).toBeDefined();
+			expect(col?.type.toUpperCase()).toBe("INTEGER");
+		});
+
+		it("new columns default to NULL for existing rows", () => {
+			ensureSchema(db);
+			db.prepare(
+				`INSERT INTO accounts (id, name, provider, refresh_token, created_at) VALUES (?, ?, ?, ?, ?)`,
+			).run("existing-id", "existing-account", "anthropic", "", Date.now());
+
+			runMigrations(db);
+
+			const row = db
+				.prepare(
+					"SELECT rate_limited_reason, rate_limited_at FROM accounts WHERE id = ?",
+				)
+				.get("existing-id") as {
+				rate_limited_reason: string | null;
+				rate_limited_at: number | null;
+			};
+
+			expect(row.rate_limited_reason).toBeNull();
+			expect(row.rate_limited_at).toBeNull();
+		});
 	});
 
 	describe("API Key Storage Migration", () => {
@@ -682,5 +736,363 @@ describe("Database Migrations - Tier Column Removal", () => {
 			expect(account.refresh_token).toBe("sk-ant-api03-claude-refresh");
 			expect(account.access_token).toBe("sk-ant-api03-claude-access");
 		});
+	});
+});
+
+describe("Database Backup Behavior", () => {
+	let tmpDir: string;
+
+	beforeEach(() => {
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "migrations-backup-"));
+	});
+
+	afterEach(() => {
+		fs.rmSync(tmpDir, { recursive: true, force: true });
+	});
+
+	it("should not create backup when dbPath is undefined", () => {
+		const db = new Database(":memory:");
+		ensureSchema(db);
+		runMigrations(db);
+		expect(fs.readdirSync(tmpDir)).toHaveLength(0);
+		db.close();
+	});
+
+	it("should not create backup when dbPath is empty string", () => {
+		const dbPath = path.join(tmpDir, "test.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		runMigrations(db, "");
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("test.db.backup"));
+		expect(backups).toHaveLength(0);
+		db.close();
+	});
+
+	it("should create backup when schema modifications are needed", () => {
+		const dbPath = path.join(tmpDir, "migrate.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.prepare(
+			`INSERT INTO accounts (id, name, provider, refresh_token, created_at) VALUES (?, ?, ?, ?, ?)`,
+		).run("mig-test-id", "mig-test", "anthropic", "some-token", Date.now());
+
+		// Simulate legacy schema that requires migration work
+		db.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+		db.close();
+
+		const db2 = new Database(dbPath);
+		runMigrations(db2, dbPath);
+		db2.close();
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("migrate.db.backup"));
+		expect(backups.length).toBeGreaterThanOrEqual(1);
+		const backupSize = fs.statSync(path.join(tmpDir, backups[0])).size;
+		expect(backupSize).toBeGreaterThan(0);
+	});
+
+	it("should prune older backups to BETTER_CCFLARE_MIGRATION_BACKUP_KEEP", () => {
+		const dbPath = path.join(tmpDir, "prune.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		// Drop 5 pre-existing backups with monotonically increasing timestamps.
+		const stalePath = path.join(tmpDir, "prune.db.backup.1000");
+		fs.writeFileSync(stalePath, "old-1");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.2000"), "old-2");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.3000"), "old-3");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.4000"), "old-4");
+		fs.writeFileSync(path.join(tmpDir, "prune.db.backup.5000"), "old-5");
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "2";
+		try {
+			// Trigger a migration so a new backup gets written + prune fires.
+			const db2 = new Database(dbPath);
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("prune.db.backup."))
+			.sort();
+		// 5 stale + 1 fresh = 6 candidates, but retention is 2.
+		expect(backups).toHaveLength(2);
+		// The freshest stale (5000) is older than the newly-created backup, so
+		// the two kept entries are: the new one, and `prune.db.backup.5000`.
+		expect(backups).toContain("prune.db.backup.5000");
+		expect(fs.existsSync(stalePath)).toBe(false);
+
+		// Explicitly verify the fresh backup survives — protects against a
+		// regression where the sorter accidentally treats the new file as
+		// oldest. The new file's suffix is the live `Date.now()`, which is
+		// orders of magnitude larger than the seeded `5000` value.
+		const freshBackup = backups.find((name) => {
+			const ts = Number.parseInt(name.slice("prune.db.backup.".length), 10);
+			return Number.isFinite(ts) && ts > 5000;
+		});
+		expect(freshBackup).toBeDefined();
+	});
+
+	it("should fall back to the default retention for garbled env values", () => {
+		// Without strict integer validation, `parseInt("3abc")` quietly returns
+		// 3 — keeping fewer backups than the operator expected. The check
+		// should treat such values as misconfiguration and use the default.
+		const dbPath = path.join(tmpDir, "garbled.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		// 5 stale backups (more than default retention of 3).
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.1000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.2000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.3000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.4000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "garbled.db.backup.5000"), "x");
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "2abc";
+		try {
+			const db2 = new Database(dbPath);
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("garbled.db.backup."));
+		// Garbled value should NOT silently parse as 2 — default of 3 applies.
+		// 5 stale + 1 fresh = 6 candidates, default retention 3 → 3 survive.
+		expect(backups).toHaveLength(3);
+	});
+
+	it("should leave backup files with non-integer suffixes untouched", () => {
+		// Operators sometimes rename a backup to a hand-picked name they want
+		// to keep ("good-baseline", "before-bad-migration"). The pruner must
+		// skip those rather than treating their suffix as a partial-parse
+		// integer and deleting them.
+		const dbPath = path.join(tmpDir, "manual.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		// Standard backups that DO match the convention.
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.1000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.2000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.3000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.4000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "manual.db.backup.5000"), "x");
+		// Hand-renamed survivors that should NEVER be pruned.
+		const keepNames = [
+			"manual.db.backup.good-baseline",
+			"manual.db.backup.before-bad-migration",
+			"manual.db.backup.3abc",
+		];
+		for (const name of keepNames) {
+			fs.writeFileSync(path.join(tmpDir, name), "manual-keep");
+		}
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "2";
+		try {
+			const db2 = new Database(dbPath);
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		// All three manually-named backups should still exist — they don't
+		// match the convention, so the pruner has no business touching them.
+		for (const name of keepNames) {
+			expect(fs.existsSync(path.join(tmpDir, name))).toBe(true);
+		}
+	});
+
+	it("should leave backups in place when BETTER_CCFLARE_MIGRATION_BACKUP_KEEP=0", () => {
+		const dbPath = path.join(tmpDir, "nokeep.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		fs.writeFileSync(path.join(tmpDir, "nokeep.db.backup.100"), "old-1");
+		fs.writeFileSync(path.join(tmpDir, "nokeep.db.backup.200"), "old-2");
+		fs.writeFileSync(path.join(tmpDir, "nokeep.db.backup.300"), "old-3");
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "0";
+		try {
+			const db2 = new Database(dbPath);
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("nokeep.db.backup."));
+		// All 3 pre-existing stubs + 1 fresh backup survive.
+		expect(backups.length).toBe(4);
+	});
+
+	it("should fall back to the default retention for negative env values", () => {
+		const dbPath = path.join(tmpDir, "negative.db");
+		const db = new Database(dbPath);
+		ensureSchema(db);
+		db.close();
+
+		fs.writeFileSync(path.join(tmpDir, "negative.db.backup.1000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "negative.db.backup.2000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "negative.db.backup.3000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "negative.db.backup.4000"), "x");
+		fs.writeFileSync(path.join(tmpDir, "negative.db.backup.5000"), "x");
+
+		const prev = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+		process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = "-1";
+		try {
+			const db2 = new Database(dbPath);
+			db2.prepare("ALTER TABLE accounts ADD COLUMN account_tier TEXT").run();
+			db2.close();
+
+			const db3 = new Database(dbPath);
+			runMigrations(db3, dbPath);
+			db3.close();
+		} finally {
+			if (prev === undefined) {
+				delete process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+			} else {
+				process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP = prev;
+			}
+		}
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("negative.db.backup."));
+		// "-1" is not a non-negative integer — default of 3 applies.
+		// 5 stale + 1 fresh = 6 candidates, default retention 3 → 3 survive.
+		expect(backups).toHaveLength(3);
+	});
+
+	it("should NOT create backup when only additive migrations are needed", () => {
+		// Build a DB that's missing several add-only columns but has no
+		// destructive migrations pending (no account_tier/tier/strict-notnull
+		// refresh_token). Migration should run and add the columns without
+		// creating a backup file.
+		const dbPath = path.join(tmpDir, "addonly.db");
+		const db = new Database(dbPath);
+		db.exec(`
+			CREATE TABLE accounts (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				provider TEXT DEFAULT 'anthropic',
+				api_key TEXT,
+				refresh_token TEXT,
+				access_token TEXT,
+				expires_at INTEGER,
+				created_at INTEGER NOT NULL,
+				last_used INTEGER,
+				request_count INTEGER DEFAULT 0,
+				total_requests INTEGER DEFAULT 0,
+				priority INTEGER DEFAULT 0
+			);
+			CREATE TABLE requests (
+				id TEXT PRIMARY KEY,
+				timestamp INTEGER NOT NULL,
+				method TEXT NOT NULL,
+				path TEXT NOT NULL,
+				account_used TEXT,
+				status_code INTEGER,
+				success BOOLEAN,
+				error_message TEXT,
+				response_time_ms INTEGER,
+				failover_attempts INTEGER DEFAULT 0
+			);
+			CREATE TABLE request_payloads (
+				id TEXT PRIMARY KEY,
+				json TEXT NOT NULL
+			);
+			CREATE TABLE oauth_sessions (
+				id TEXT PRIMARY KEY,
+				account_name TEXT NOT NULL,
+				verifier TEXT NOT NULL,
+				mode TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				expires_at INTEGER NOT NULL
+			);
+			CREATE TABLE api_keys (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL UNIQUE,
+				hashed_key TEXT NOT NULL UNIQUE,
+				prefix_last_8 TEXT NOT NULL,
+				created_at INTEGER NOT NULL,
+				last_used INTEGER,
+				usage_count INTEGER DEFAULT 0,
+				is_active INTEGER DEFAULT 1
+			);
+		`);
+		db.close();
+
+		const db2 = new Database(dbPath);
+		runMigrations(db2, dbPath);
+		db2.close();
+
+		const backups = fs
+			.readdirSync(tmpDir)
+			.filter((f) => f.startsWith("addonly.db.backup"));
+		expect(backups).toHaveLength(0);
+
+		// And verify the migration actually ran something — at least one of
+		// the add-only columns should now be present.
+		const db3 = new Database(dbPath);
+		const cols = (
+			db3.prepare("PRAGMA table_info(accounts)").all() as Array<{
+				name: string;
+			}>
+		).map((c) => c.name);
+		db3.close();
+		expect(cols).toContain("rate_limited_until");
+		expect(cols).toContain("paused");
 	});
 });

@@ -6,7 +6,107 @@ import { addPerformanceIndexes } from "./performance-indexes";
 
 const log = new Logger("DatabaseMigrations");
 
+const DEFAULT_BACKUP_RETENTION = 3;
+const INTEGER_RE = /^\d+$/;
+
+/**
+ * Keep at most this many `.backup.<timestamp>` files alongside the live DB.
+ * Each backup is a full copy of the DB (multi-GB in practice), so without a
+ * cap they accumulate quickly when rapid restarts trigger repeat migrations.
+ *
+ * Override with `BETTER_CCFLARE_MIGRATION_BACKUP_KEEP`. 0 disables pruning
+ * entirely — operators who manage retention externally (e.g. via a separate
+ * cron + S3 sync) can opt out without losing the pre-migration safety net.
+ *
+ * Inputs that look like garbled integers (`"3abc"`, `"1.5"`, `""`,
+ * `"infinity"`) fall back to the default rather than silently truncating to
+ * a partial parse — `Number.parseInt` is too forgiving for that.
+ */
+function getBackupRetention(): number {
+	const raw = process.env.BETTER_CCFLARE_MIGRATION_BACKUP_KEEP;
+	if (raw === undefined || raw === "") return DEFAULT_BACKUP_RETENTION;
+	if (!INTEGER_RE.test(raw)) {
+		log.warn(
+			`BETTER_CCFLARE_MIGRATION_BACKUP_KEEP="${raw}" is not a non-negative integer — using default ${DEFAULT_BACKUP_RETENTION}`,
+		);
+		return DEFAULT_BACKUP_RETENTION;
+	}
+	return Number.parseInt(raw, 10);
+}
+
+function pruneOldBackups(absoluteSourcePath: string): void {
+	const keep = getBackupRetention();
+	// keep === 0 means "do nothing", not "delete everything" — leaves all
+	// existing backups in place for operators managing retention externally.
+	if (keep === 0) return;
+
+	const dir = path.dirname(absoluteSourcePath);
+	const base = path.basename(absoluteSourcePath);
+	const prefix = `${base}.backup.`;
+
+	let entries: string[];
+	try {
+		entries = fs.readdirSync(dir);
+	} catch (error) {
+		log.warn(
+			`Could not list backup directory for pruning: ${(error as Error).message}`,
+		);
+		return;
+	}
+
+	// Order by the embedded `Date.now()` suffix, not mtime — survives clock
+	// drift, `touch`, and rsync timestamps. Names whose suffix isn't a pure
+	// integer (e.g. `db.backup.3abc`, `db.backup.notes`) are skipped — left
+	// untouched on disk — to honour an operator's manually-renamed files.
+	// `INTEGER_RE` matches before `parseInt` so trailing garbage can't
+	// silently truncate `db.backup.3abc` to timestamp 3 and prune a file
+	// that doesn't match the convention.
+	const backups = entries
+		.filter((name) => name.startsWith(prefix))
+		.map((name) => ({ name, suffix: name.slice(prefix.length) }))
+		.filter((entry) => INTEGER_RE.test(entry.suffix))
+		.map((entry) => ({
+			name: entry.name,
+			ts: Number.parseInt(entry.suffix, 10),
+		}))
+		.sort((a, b) => b.ts - a.ts);
+
+	const toDelete = backups.slice(keep);
+	for (const entry of toDelete) {
+		const filePath = path.join(dir, entry.name);
+		try {
+			fs.unlinkSync(filePath);
+			log.info(`Pruned old DB backup: ${entry.name}`);
+		} catch (error) {
+			log.warn(
+				`Failed to prune backup ${entry.name}: ${(error as Error).message}`,
+			);
+		}
+	}
+}
+
 export function ensureSchema(db: Database): void {
+	// Apply auto_vacuum = INCREMENTAL before any tables exist so fresh DBs are
+	// born in incremental-vacuum mode. SQLite stores this in the DB header and
+	// the mode can only change when no tables exist OR by a full VACUUM — once
+	// committed, the periodic `PRAGMA incremental_vacuum(N)` worker can reclaim
+	// free pages a chunk at a time without ever needing a multi-minute
+	// blocking VACUUM. Existing DBs upgraded from auto_vacuum=NONE (mode 0)
+	// take the one-shot migration VACUUM at server startup; this PRAGMA is a
+	// no-op for them until that migration runs (see bootstrapAutoVacuum in
+	// apps/server/src/server.ts).
+	//
+	// Gated on current mode === 0 to preserve `auto_vacuum=FULL` (mode 1) as
+	// an explicit operator choice — SQLite quietly allows mode 1 → mode 2
+	// transitions without VACUUM, and issuing the PRAGMA unconditionally
+	// would silently rewrite that policy. (Greptile #230)
+	const currentAutoVacuum = (
+		db.query("PRAGMA auto_vacuum").get() as { auto_vacuum: number }
+	).auto_vacuum;
+	if (currentAutoVacuum === 0) {
+		db.exec("PRAGMA auto_vacuum = INCREMENTAL");
+	}
+
 	// Create accounts table
 	db.run(`
 		CREATE TABLE IF NOT EXISTS accounts (
@@ -99,6 +199,8 @@ export function ensureSchema(db: Database): void {
 			account_name TEXT NOT NULL,
 			verifier TEXT NOT NULL,
 			mode TEXT NOT NULL,
+			custom_endpoint TEXT,
+			priority INTEGER NOT NULL DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			expires_at INTEGER NOT NULL
 		)
@@ -221,15 +323,6 @@ export function ensureSchema(db: Database): void {
 		       ('sonnet', NULL, 0),
 		       ('haiku',  NULL, 0);
 	`);
-
-	// Create settings table for global configuration values
-	db.run(`
-		CREATE TABLE IF NOT EXISTS settings (
-			key        TEXT PRIMARY KEY,
-			value      TEXT NOT NULL,
-			updated_at INTEGER NOT NULL
-		)
-	`);
 }
 
 export function runMigrations(db: Database, dbPath?: string): void {
@@ -281,42 +374,106 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 	const finalOAuthColumnNames = finalOAuthColumns.map((col) => col.name);
 
-	// Create backup if tier columns exist (before any database operations)
-	const hasTierColumns =
+	// Query remaining tables for the per-column ALTER TABLE checks below.
+	// (Backup gating, `willMutate`, only consults the accounts/oauth_sessions
+	// table info already read above; these reads feed the additive migrations.)
+	const requestsInfo = db
+		.prepare("PRAGMA table_info(requests)")
+		.all() as Array<{ name: string }>;
+	const requestsColumnNames = requestsInfo.map((col) => col.name);
+
+	const requestPayloadsInfo = db
+		.prepare("PRAGMA table_info(request_payloads)")
+		.all() as Array<{ name: string }>;
+	const requestPayloadsColumnNames = requestPayloadsInfo.map((col) => col.name);
+
+	const apiKeysInfo = db.prepare("PRAGMA table_info(api_keys)").all() as Array<{
+		name: string;
+	}>;
+	const apiKeysColumnNames = apiKeysInfo.map((col) => col.name);
+
+	const oauthSessionsInfo = db
+		.prepare("PRAGMA table_info(oauth_sessions)")
+		.all() as Array<{ name: string }>;
+	const initialOauthSessionsColumnNames = oauthSessionsInfo.map(
+		(col) => col.name,
+	);
+
+	const refreshTokenCol = accountsInfo.find(
+		(col) => col.name === "refresh_token",
+	);
+
+	// A migration mutates the DB irreversibly when it drops a column, rebuilds a
+	// table, or relaxes a NOT NULL constraint (SQLite does table rebuilds for
+	// these). If those fail mid-flight, restoring from the pre-migration backup
+	// is the only way to recover the dropped data.
+	//
+	// Plain `ALTER TABLE ADD COLUMN` is reversible (just drop the column or
+	// re-run the migration on a fresh DB) and rolls back cleanly inside the
+	// migration transaction, so it doesn't need a multi-GB file copy of the
+	// live DB ahead of every restart.
+	const willMutate =
+		(refreshTokenCol && refreshTokenCol.notnull === 1) ||
 		finalAccountsColumnNames.includes("account_tier") ||
 		finalOAuthColumnNames.includes("tier");
 
-	if (hasTierColumns) {
-		// Create backup before removing tier columns using file copy
-		// Validate dbPath and use a proper default
-		const sourcePath = dbPath && dbPath !== "" ? dbPath : "better-ccflare.db";
-
+	// Create backup before *destructive* schema modifications only.
+	if (willMutate && dbPath && dbPath !== "") {
 		try {
-			// Resolve to absolute path to prevent directory traversal attacks
-			const absoluteSourcePath = path.resolve(sourcePath);
+			const absoluteSourcePath = path.resolve(dbPath);
 
-			// Additional security validation - check for unsafe path patterns that could indicate directory traversal
-			// This prevents potential security issues if dbPath comes from untrusted sources in the future
 			if (
 				absoluteSourcePath.includes("../") ||
 				absoluteSourcePath.includes("..\\") ||
 				absoluteSourcePath.endsWith("..") ||
 				absoluteSourcePath.startsWith("..")
 			) {
-				log.warn(`Unsafe path detected: ${sourcePath}. Skipping backup.`);
-				// Continue with the rest of the migration to ensure database schema updates still occur
+				log.warn(`Unsafe path detected: ${dbPath}. Skipping backup.`);
 			} else if (fs.existsSync(absoluteSourcePath)) {
-				// Check if it's actually a file (not a directory) to prevent backup errors
 				const stats = fs.statSync(absoluteSourcePath);
-				if (stats.isFile()) {
-					// Use the validated database path for backup
-					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
-					fs.copyFileSync(absoluteSourcePath, backupPath);
-					log.info(`Database backup created at: ${backupPath}`);
-				} else {
+				if (!stats.isFile()) {
 					log.warn(
 						`Database path is not a file: ${absoluteSourcePath}. Skipping backup.`,
 					);
+				} else if (stats.size === 0) {
+					log.debug("Database file is empty, skipping backup.");
+				} else {
+					const backupPath = `${absoluteSourcePath}.backup.${Date.now()}`;
+					// VACUUM INTO writes a defragmented copy via SQLite's pager.
+					// vs fs.copyFileSync: atomic page-by-page (no torn output mid-write
+					// across a checkpoint), produces a smaller file, and doesn't race
+					// the migration's own writes. Two-phase rename avoids leaving a
+					// half-written `.backup.<ts>` if SIGTERM hits mid-VACUUM.
+					const tempBackupPath = `${backupPath}.partial`;
+					// SQLite string literals only need single-quote doubling for
+					// escaping — backslash is not special. Embedding the path as a
+					// quoted literal is required because VACUUM INTO does not
+					// support host parameter binding for the destination path.
+					const escapedTempPath = tempBackupPath.replace(/'/g, "''");
+					try {
+						// VACUUM INTO refuses if the target exists, and a SIGTERM during
+						// a previous attempt may have left one behind. Unlink directly
+						// and swallow ENOENT (no exists+unlink TOCTOU window — a parallel
+						// cleanup between the two calls would otherwise misreport the
+						// race as a backup failure).
+						try {
+							fs.unlinkSync(tempBackupPath);
+						} catch (e) {
+							if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+						}
+						db.exec(`VACUUM INTO '${escapedTempPath}'`);
+						fs.renameSync(tempBackupPath, backupPath);
+						log.info(`Database backup created at: ${backupPath}`);
+						pruneOldBackups(absoluteSourcePath);
+					} catch (vacuumError) {
+						try {
+							fs.unlinkSync(tempBackupPath);
+						} catch {
+							// Best-effort cleanup; ENOENT here is the normal case
+							// (VACUUM never created the file).
+						}
+						throw vacuumError;
+					}
 				}
 			} else {
 				log.warn(
@@ -324,9 +481,8 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				);
 			}
 		} catch (error) {
-			// Catch any errors during backup process to ensure migrations continue
 			log.warn(
-				`Error during database backup validation: ${(error as Error).message}. Skipping backup.`,
+				`Error during database backup: ${(error as Error).message}. Skipping backup.`,
 			);
 		}
 	}
@@ -497,6 +653,20 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added openrouter_provider_preference column to accounts table");
 		}
 
+		if (!initialAccountsColumnNames.includes("rate_limited_reason")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN rate_limited_reason TEXT",
+			).run();
+			log.info("Added rate_limited_reason column to accounts table");
+		}
+
+		if (!initialAccountsColumnNames.includes("rate_limited_at")) {
+			db.prepare(
+				"ALTER TABLE accounts ADD COLUMN rate_limited_at INTEGER",
+			).run();
+			log.info("Added rate_limited_at column to accounts table");
+		}
+
 		// Make refresh_token nullable (was NOT NULL, causing API-key providers to need workarounds)
 		const refreshTokenCol = accountsInfo.find(
 			(col) => col.name === "refresh_token",
@@ -585,23 +755,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			throw error;
 		}
 
-		// Check columns in oauth_sessions table
-		const oauthSessionsInfo = db
-			.prepare("PRAGMA table_info(oauth_sessions)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const initialOauthSessionsColumnNames = oauthSessionsInfo.map(
-			(col) => col.name,
-		);
-
 		// Add custom_endpoint column to oauth_sessions if it doesn't exist
 		if (!initialOauthSessionsColumnNames.includes("custom_endpoint")) {
 			db.prepare(
@@ -610,20 +763,13 @@ export function runMigrations(db: Database, dbPath?: string): void {
 			log.info("Added custom_endpoint column to oauth_sessions table");
 		}
 
-		// Check columns in requests table
-		const requestsInfo = db
-			.prepare("PRAGMA table_info(requests)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const requestsColumnNames = requestsInfo.map((col) => col.name);
+		// Add priority column to oauth_sessions if it doesn't exist
+		if (!initialOauthSessionsColumnNames.includes("priority")) {
+			db.prepare(
+				"ALTER TABLE oauth_sessions ADD COLUMN priority INTEGER NOT NULL DEFAULT 0",
+			).run();
+			log.info("Added priority column to oauth_sessions table");
+		}
 
 		// Add model column if it doesn't exist
 		if (!requestsColumnNames.includes("model")) {
@@ -742,22 +888,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 		}
 
 		// Add timestamp column to request_payloads if it doesn't exist
-		const requestPayloadsInfo = db
-			.prepare("PRAGMA table_info(request_payloads)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const requestPayloadsColumnNames = requestPayloadsInfo.map(
-			(col) => col.name,
-		);
-
 		if (!requestPayloadsColumnNames.includes("timestamp")) {
 			db.prepare(
 				"ALTER TABLE request_payloads ADD COLUMN timestamp INTEGER",
@@ -776,21 +906,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 				"Added timestamp column to request_payloads table and backfilled from requests",
 			);
 		}
-
-		// Check columns in api_keys table
-		const apiKeysInfo = db
-			.prepare("PRAGMA table_info(api_keys)")
-			.all() as Array<{
-			cid: number;
-			name: string;
-			type: string;
-			notnull: number;
-			// biome-ignore lint/suspicious/noExplicitAny: SQLite pragma can return various default value types
-			dflt_value: any;
-			pk: number;
-		}>;
-
-		const apiKeysColumnNames = apiKeysInfo.map((col) => col.name);
 
 		// Add role column to api_keys if it doesn't exist (Migration v4)
 		if (!apiKeysColumnNames.includes("role")) {
@@ -863,11 +978,31 @@ export function runMigrations(db: Database, dbPath?: string): void {
 
 		// Drop tier column from oauth_sessions table if it exists
 		if (finalOAuthColumnNames.includes("tier")) {
+			// Relies on the priority ADD COLUMN above having run earlier in this
+			// same transaction; do not reorder these blocks.
+			//
+			// IMPORTANT: explicitly recreate the target schema with all constraints
+			// (PRIMARY KEY, NOT NULL, DEFAULT) — `CREATE TABLE ... AS SELECT ...`
+			// only copies column types, dropping every constraint. Keep this in
+			// sync with the oauth_sessions definition in ensureSchema().
 			db.prepare(`
-			CREATE TABLE oauth_sessions_new AS
-			SELECT id, account_name, verifier, mode, created_at, expires_at, custom_endpoint
-			FROM oauth_sessions
-		`).run();
+				CREATE TABLE oauth_sessions_new (
+					id TEXT PRIMARY KEY,
+					account_name TEXT NOT NULL,
+					verifier TEXT NOT NULL,
+					mode TEXT NOT NULL,
+					custom_endpoint TEXT,
+					priority INTEGER NOT NULL DEFAULT 0,
+					created_at INTEGER NOT NULL,
+					expires_at INTEGER NOT NULL
+				)
+			`).run();
+
+			db.prepare(`
+				INSERT INTO oauth_sessions_new (id, account_name, verifier, mode, custom_endpoint, priority, created_at, expires_at)
+				SELECT id, account_name, verifier, mode, custom_endpoint, priority, created_at, expires_at
+				FROM oauth_sessions
+			`).run();
 
 			db.prepare(`DROP TABLE oauth_sessions`).run();
 			db.prepare(
@@ -1056,25 +1191,6 @@ export function runMigrations(db: Database, dbPath?: string): void {
 	} catch (error) {
 		log.error(`Database migration failed: ${(error as Error).message}`);
 		throw error; // Re-throw to allow calling code to handle the failure
-	}
-
-	// Idempotent: ensure settings table exists for databases created before this migration
-	const settingsTableExists = (
-		db
-			.prepare(
-				"SELECT name FROM sqlite_master WHERE type='table' AND name='settings'",
-			)
-			.get() as { name: string } | undefined
-	)?.name;
-	if (!settingsTableExists) {
-		db.run(`
-			CREATE TABLE IF NOT EXISTS settings (
-				key        TEXT PRIMARY KEY,
-				value      TEXT NOT NULL,
-				updated_at INTEGER NOT NULL
-			)
-		`);
-		log.info("Created settings table");
 	}
 }
 

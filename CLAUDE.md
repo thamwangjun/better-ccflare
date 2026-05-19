@@ -10,22 +10,79 @@ Load balancer proxy for Claude distributing requests across multiple account pro
 
 **README files** - Only modify `./README.md` (root). Do NOT modify `apps/cli/README.md`.
 
-**NEVER TOUCH `inline-worker.ts`** — auto-generated, must be excluded from all reads, edits, searches, and commits.
-If accidentally modified: `git checkout -- packages/proxy/src/inline-worker.ts`
+**NEVER TOUCH these auto-generated files** — must be excluded from all reads, edits, searches, and commits:
+- `packages/proxy/src/inline-worker.ts`
+- `packages/database/src/inline-vacuum-worker.ts`
+- `packages/database/src/inline-integrity-check-worker.ts`
+
+If accidentally modified: `git checkout -- <path>`
+
+## Git Refspecs
+This repo has both a `main` branch and a `main` tag. **Always use `refs/heads/main`** (not `main`) for all git log, diff, checkout, and merge-base commands to avoid ambiguous refspec errors. Applies to: `git log refs/heads/main`, `git diff refs/heads/main...`, `git merge-base refs/heads/main`, etc.
 
 ## Branch Management
 Always branch from `main` with a fresh pull. Never make changes directly on main.
 PRs: `gh pr checkout <PR_NUMBER>` or `git checkout <branch-name>`.
 - If `git push origin main` fails with `src refspec main matches more than one` (branch/tag name collision), push explicitly: `git push origin refs/heads/main:refs/heads/main`.
 
+## PR Review Against Current Main (MANDATORY)
+
+Before reviewing or merging any PR, always find the merge base and identify what main has added since the PR branched:
+
+```bash
+git fetch origin pull/<PR_NUMBER>/head:<branch-name>
+MERGE_BASE=$(git merge-base <branch-name> origin/main)
+git log $MERGE_BASE..origin/main --oneline          # commits on main the PR doesn't have
+git diff $MERGE_BASE..origin/main --name-only        # files main changed since PR branched
+```
+
+Cross-check the PR's changed files against main's post-branch files. If they overlap, inspect those specific hunks to confirm the PR doesn't regress recent fixes. A PR based on an old main can silently overwrite hotfixes, security patches, or behaviour changes that landed after it branched.
+
+## Merging PRs from External Contributors
+When merging PRs from external contributors (not tombii), **create a merge commit** instead of squashing or rebasing. This preserves the contributor's commit history and ensures they appear in the git log as a contributor. Use:
+```bash
+git merge --no-ff <branch-name>
+```
+The `--no-ff` flag creates a merge commit even if the branch could be fast-forwarded.
+
+**Do NOT use `gh pr merge`** — it may squash or rebase, losing the contributor's identity. Always merge manually with `git merge --no-ff`.
+
+If the PR branch isn't available locally, fetch it first:
+```bash
+git fetch origin pull/<PR_NUMBER>/head:<branch-name>
+git merge --no-ff <branch-name>
+```
+
+After merging, update the Acknowledgements section in README.md to thank the contributor for their specific contributions.
+
 ## Issue Management
 - Never close issues automatically
 - Wait for the issue reporter to confirm that fixes work for them before closing
+
+## Issue Staleness Check (MANDATORY before implementing)
+Before implementing any GitHub issue, always run:
+```bash
+git log refs/heads/main --since='<issue-open-date>' --oneline --no-merges -- <relevant-paths>
+```
+Check if recent commits already partially or fully address the issue. Rate limiting, health, and proxy code change frequently. Ask the user "does this issue still apply given recent changes?" before proceeding. Especially check: has the reported symptom been fixed? Does the proposal conflict with new architecture?
 
 ## Database
 - Default: `~/.config/better-ccflare/better-ccflare.db`
 - Custom: Set `BETTER_CCFLARE_DB_PATH=/path/to/dev.db` in env or .env
 - Query: `sqlite3 ~/.config/better-ccflare/better-ccflare.db "SELECT name, provider, custom_endpoint FROM accounts;"`
+
+## ⚠️ CRITICAL: Database Migrations — Port to PostgreSQL
+
+**Every migration added to `packages/database/src/migrations.ts` MUST also be ported to `packages/database/src/migrations-pg.ts`.**
+
+When adding a new column or table to SQLite:
+1. Add it to `ensureSchema()` in `migrations.ts` (SQLite CREATE TABLE)
+2. Add it to `runMigrations()` in `migrations.ts` (SQLite ALTER TABLE for existing DBs)
+3. Add it to `ensureSchemaPg()` in `migrations-pg.ts` (PG CREATE TABLE for new installs)
+4. Add an entry to the `columnsToAdd` array in `runMigrationsPg()` in `migrations-pg.ts` (PG ALTER TABLE for existing DBs)
+5. If there's a backfill/data migration in SQLite, add the equivalent `adapter.unsafe(UPDATE ...)` call in `runMigrationsPg()` as well.
+
+New tables also need to be created in `ensureSchemaPg()` AND in `runMigrationsPg()` (using `CREATE TABLE IF NOT EXISTS` so upgrades work).
 
 ## Subagents for Multi-Task Work
 When a session involves multiple independent tasks, always spawn subagents rather than doing them sequentially in the main context. This conserves tokens and keeps the main context clean. Tasks don't need to run in parallel — the goal is context isolation, not speed.
@@ -36,10 +93,12 @@ When a session involves multiple independent tasks, always spawn subagents rathe
 When executing implementation plans, always use subagent-driven development (superpowers:subagent-driven-development). Never execute plans inline in the main session. Always dispatch a fresh subagent per task.
 
 ## Test-Driven Development
-When creating new functionality: write tests first, then implement, then run tests.
+When creating new functionality: write tests first, then implement, then run tests. This ensures the implementation matches the specs/request before and after coding.
 
 ## After Code Changes
 Always run: `bun run lint && bun run typecheck && bun run format`
+
+After pushing commits to main, run `npx gitnexus analyze` to keep the GitNexus index up to date.
 
 ## Git Commits
 - **Before making any changes, run `git status` to check for pre-existing uncommitted changes.** Note which files were already modified so you can distinguish your changes from theirs throughout the session.
@@ -101,7 +160,7 @@ Automated release system uses commit prefixes for changelog:
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **better-ccflare** (5058 symbols, 11350 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **better-ccflare** (9729 symbols, 18307 relationships, 236 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -113,44 +172,12 @@ This project is indexed by GitNexus as **better-ccflare** (5058 symbols, 11350 r
 - When exploring unfamiliar code, use `gitnexus_query({query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
 - When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `gitnexus_context({name: "symbolName"})`.
 
-## When Debugging
-
-1. `gitnexus_query({query: "<error or symptom>"})` — find execution flows related to the issue
-2. `gitnexus_context({name: "<suspect function>"})` — see all callers, callees, and process participation
-3. `READ gitnexus://repo/better-ccflare/process/{processName}` — trace the full execution flow step by step
-4. For regressions: `gitnexus_detect_changes({scope: "compare", base_ref: "main"})` — see what your branch changed
-
-## When Refactoring
-
-- **Renaming**: MUST use `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` first. Review the preview — graph edits are safe, text_search edits need manual review. Then run with `dry_run: false`.
-- **Extracting/Splitting**: MUST run `gitnexus_context({name: "target"})` to see all incoming/outgoing refs, then `gitnexus_impact({target: "target", direction: "upstream"})` to find all external callers before moving code.
-- After any refactor: run `gitnexus_detect_changes({scope: "all"})` to verify only expected files changed.
-
 ## Never Do
 
 - NEVER edit a function, class, or method without first running `gitnexus_impact` on it.
 - NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
 - NEVER rename symbols with find-and-replace — use `gitnexus_rename` which understands the call graph.
 - NEVER commit changes without running `gitnexus_detect_changes()` to check affected scope.
-
-## Tools Quick Reference
-
-| Tool | When to use | Command |
-|------|-------------|---------|
-| `query` | Find code by concept | `gitnexus_query({query: "auth validation"})` |
-| `context` | 360-degree view of one symbol | `gitnexus_context({name: "validateUser"})` |
-| `impact` | Blast radius before editing | `gitnexus_impact({target: "X", direction: "upstream"})` |
-| `detect_changes` | Pre-commit scope check | `gitnexus_detect_changes({scope: "staged"})` |
-| `rename` | Safe multi-file rename | `gitnexus_rename({symbol_name: "old", new_name: "new", dry_run: true})` |
-| `cypher` | Custom graph queries | `gitnexus_cypher({query: "MATCH ..."})` |
-
-## Impact Risk Levels
-
-| Depth | Meaning | Action |
-|-------|---------|--------|
-| d=1 | WILL BREAK — direct callers/importers | MUST update these |
-| d=2 | LIKELY AFFECTED — indirect deps | Should test |
-| d=3 | MAY NEED TESTING — transitive | Test if critical path |
 
 ## Resources
 
@@ -160,32 +187,6 @@ This project is indexed by GitNexus as **better-ccflare** (5058 symbols, 11350 r
 | `gitnexus://repo/better-ccflare/clusters` | All functional areas |
 | `gitnexus://repo/better-ccflare/processes` | All execution flows |
 | `gitnexus://repo/better-ccflare/process/{name}` | Step-by-step execution trace |
-
-## Self-Check Before Finishing
-
-Before completing any code modification task, verify:
-1. `gitnexus_impact` was run for all modified symbols
-2. No HIGH/CRITICAL risk warnings were ignored
-3. `gitnexus_detect_changes()` confirms changes match expected scope
-4. All d=1 (WILL BREAK) dependents were updated
-
-## Keeping the Index Fresh
-
-After committing code changes, the GitNexus index becomes stale. Re-run analyze to update it:
-
-```bash
-npx gitnexus analyze
-```
-
-If the index previously included embeddings, preserve them by adding `--embeddings`:
-
-```bash
-npx gitnexus analyze --embeddings
-```
-
-To check whether embeddings exist, inspect `.gitnexus/meta.json` — the `stats.embeddings` field shows the count (0 means no embeddings). **Running analyze without `--embeddings` will delete any previously generated embeddings.**
-
-> Claude Code users: A PostToolUse hook handles this automatically after `git commit` and `git merge`.
 
 ## CLI
 

@@ -1,11 +1,11 @@
-import { logError, RateLimitError } from "@better-ccflare/core";
+import { logError, RateLimitError, TIME_CONSTANTS } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import {
 	type Provider,
 	parseCodexUsageHeaders,
 	usageCache,
 } from "@better-ccflare/providers";
-import type { Account } from "@better-ccflare/types";
+import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./proxy-types";
 
 const log = new Logger("ResponseProcessor");
@@ -23,16 +23,15 @@ export function handleRateLimitResponse(
 ): void {
 	if (!rateLimitInfo.resetTime) return;
 
-	log.warn(
-		`Account ${account.name} rate-limited until ${new Date(
-			rateLimitInfo.resetTime,
-		).toISOString()}`,
-	);
-
 	const resetTime = rateLimitInfo.resetTime;
-	ctx.asyncWriter.enqueue(() =>
-		ctx.dbOps.markAccountRateLimited(account.id, resetTime),
-	);
+	const reason: RateLimitReason = "upstream_429_with_reset";
+	account.rate_limited_until = resetTime;
+	ctx.asyncWriter.enqueue(() => {
+		log.warn(
+			`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(resetTime).toISOString()}`,
+		);
+		return ctx.dbOps.markAccountRateLimited(account.id, resetTime, reason);
+	});
 
 	const rateLimitError = new RateLimitError(
 		account.id,
@@ -269,19 +268,48 @@ export async function processProxyResponse(
 	// (status 200 with an SSE `event: error` frame partway through the body)
 	// is handled separately by the streaming forwarder — see issue #114.
 	if (rateLimitInfo.isRateLimited) {
-		if (rateLimitInfo.resetTime) {
+		// Skip cooldown application on synthetic cache-keepalive replays. The
+		// keepalive scheduler fires parallel requests across every cached
+		// account simultaneously; bursts of 4+ concurrent requests can trip
+		// Anthropic's per-IP burst limit and 429 every account at the same
+		// instant. Treating those as real per-account rate limits drains the
+		// pool to zero routable accounts even though no user-visible quota
+		// was actually exhausted. Loop-prevention header set by
+		// cache-keepalive-scheduler.ts; only synthetic replays carry it.
+		const isKeepalive =
+			requestMeta?.headers?.get("x-better-ccflare-keepalive") === "true";
+		if (isKeepalive) {
+			log.warn(
+				`Keepalive replay for ${account.name} got 429 — skipping cooldown (synthetic burst, not a real per-account rate limit)`,
+			);
+		} else if (rateLimitInfo.resetTime) {
 			handleRateLimitResponse(account, rateLimitInfo, ctx);
 		} else {
-			// Mark as rate-limited even without reset time
+			// Mark as rate-limited even without reset time. Use a short
+			// probe-friendly cooldown (default 60s, override via
+			// CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) instead of the previous
+			// 5h hard-ban: a reset-less 429 is more likely a transient than
+			// a real rate-limit window, and a 5h ban on every transient
+			// error chains pool exhaustion under burst load.
+			const cooldownMs =
+				Number(process.env.CCFLARE_DEFAULT_COOLDOWN_NO_RESET_MS) ||
+				TIME_CONSTANTS.DEFAULT_RATE_LIMIT_NO_RESET_COOLDOWN_MS;
 			log.warn(
-				`Account ${account.name} rate-limited but no reset time available`,
+				`Account ${account.name} rate-limited but no reset time available — applying ${cooldownMs}ms probe cooldown`,
 			);
-			ctx.asyncWriter.enqueue(() =>
-				ctx.dbOps.markAccountRateLimited(
+			const cooldownUntil = Date.now() + cooldownMs;
+			account.rate_limited_until = cooldownUntil;
+			ctx.asyncWriter.enqueue(() => {
+				const reason: RateLimitReason = "upstream_429_no_reset_probe_cooldown";
+				log.warn(
+					`[ccflare] account=${account.name} cooldown_applied reason=${reason} until=${new Date(cooldownUntil).toISOString()}`,
+				);
+				return ctx.dbOps.markAccountRateLimited(
 					account.id,
-					Date.now() + 5 * 60 * 60 * 1000,
-				),
-			); // Default to 5 hours — applies to any provider without reset headers
+					cooldownUntil,
+					reason,
+				);
+			});
 		}
 		// Also update metadata for rate-limited responses
 		const bypassSession =
@@ -301,6 +329,7 @@ export async function processProxyResponse(
 	// the stored expiry fires. Only enqueue the DB write when the in-memory account object
 	// already carries a rate_limited_until value to avoid overhead on every normal request.
 	if (!rateLimitInfo.isRateLimited && account.rate_limited_until) {
+		account.rate_limited_until = null;
 		ctx.asyncWriter.enqueue(async () => {
 			const db = ctx.dbOps.getAdapter();
 			await db.run(
