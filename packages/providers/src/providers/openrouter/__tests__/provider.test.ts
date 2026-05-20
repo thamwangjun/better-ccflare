@@ -1,6 +1,31 @@
 import { describe, expect, it } from "bun:test";
 import { OpenRouterProvider } from "../provider";
 
+// Inline types for transformed request body assertions
+interface TestCacheControl {
+	type: string;
+	ttl?: string;
+}
+interface TestContentBlock {
+	type: string;
+	text?: string;
+	cache_control?: TestCacheControl;
+}
+interface TestMessage {
+	role: string;
+	content: string | TestContentBlock[];
+	cache_control?: TestCacheControl;
+}
+interface TestTool {
+	name: string;
+	cache_control?: TestCacheControl;
+}
+interface TestSystemBlock {
+	type: string;
+	text?: string;
+	cache_control?: TestCacheControl;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // extractUsageInfo — CACHE-01
 // ─────────────────────────────────────────────────────────────────────────────
@@ -188,7 +213,7 @@ describe("OpenRouterProvider.transformRequestBody", () => {
 
 		const lastAssistant = [...result.messages]
 			.reverse()
-			.find((m: any) => m.role === "assistant");
+			.find((m: TestMessage) => m.role === "assistant");
 		expect(Array.isArray(lastAssistant?.content)).toBe(true);
 		expect(lastAssistant?.content[0]).toEqual({
 			type: "text",
@@ -270,7 +295,7 @@ describe("OpenRouterProvider.transformRequestBody", () => {
 
 		const lastUser = [...result.messages]
 			.reverse()
-			.find((m: any) => m.role === "user");
+			.find((m: TestMessage) => m.role === "user");
 		expect(
 			lastUser?.content[lastUser.content.length - 1].cache_control,
 		).toEqual({
@@ -298,7 +323,7 @@ describe("OpenRouterProvider.transformRequestBody", () => {
 
 		const lastUser = [...result.messages]
 			.reverse()
-			.find((m: any) => m.role === "user");
+			.find((m: TestMessage) => m.role === "user");
 		expect(Array.isArray(lastUser?.content)).toBe(true);
 		expect(lastUser?.content[0]).toEqual({
 			type: "text",
@@ -339,17 +364,17 @@ describe("OpenRouterProvider.transformRequestBody", () => {
 		// The last assistant turn should NOT receive a new cache_control because we already have 4
 		const _lastAssistant = [...result.messages]
 			.reverse()
-			.find((m: any) => m.role === "assistant");
+			.find((m: TestMessage) => m.role === "assistant");
 		// Count total cache_control blocks across all injection sites
 		const toolCacheCount = result.tools.filter(
-			(t: any) => t.cache_control,
+			(t: TestTool) => t.cache_control,
 		).length;
 		const systemCacheCount = result.system.filter(
-			(s: any) => s.cache_control,
+			(s: TestSystemBlock) => s.cache_control,
 		).length;
-		const msgCacheCount = result.messages.flatMap((m: any) =>
+		const msgCacheCount = result.messages.flatMap((m: TestMessage) =>
 			Array.isArray(m.content)
-				? m.content.filter((c: any) => c.cache_control)
+				? (m.content as TestContentBlock[]).filter((c) => c.cache_control)
 				: m.cache_control
 					? [1]
 					: [],
@@ -388,15 +413,15 @@ describe("OpenRouterProvider.transformRequestBody", () => {
 
 		// Count all cache_control annotations across every injection site
 		const toolCacheCount = result.tools.filter(
-			(t: any) => t.cache_control,
+			(t: TestTool) => t.cache_control,
 		).length;
 		const systemCacheCount = Array.isArray(result.system)
-			? result.system.filter((s: any) => s.cache_control).length
+			? result.system.filter((s: TestSystemBlock) => s.cache_control).length
 			: 0;
-		const msgBlocks = result.messages.flatMap((m: any) =>
-			Array.isArray(m.content) ? m.content : [],
+		const msgBlocks = result.messages.flatMap((m: TestMessage) =>
+			Array.isArray(m.content) ? (m.content as TestContentBlock[]) : [],
 		);
-		const msgCacheCount = msgBlocks.filter((b: any) => b.cache_control).length;
+		const msgCacheCount = msgBlocks.filter((b: TestContentBlock) => b.cache_control).length;
 		const totalCacheCount = toolCacheCount + systemCacheCount + msgCacheCount;
 
 		// With count guard: 3 pre-existing + 1 system injection = exactly 4 total
