@@ -1,10 +1,11 @@
 ---
 phase: 04
 slug: cache-extension-provider-injection
-status: draft
+status: verified
 nyquist_compliant: true
 wave_0_complete: true
 created: 2026-05-20
+audited: 2026-05-20
 ---
 
 # Phase 04 — Validation Strategy
@@ -38,12 +39,12 @@ created: 2026-05-20
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 04-01-01 | 01 | 1 | PROV-01 | T-04-01-01 | PG migration idempotent (ADD COLUMN IF NOT EXISTS semantics) | grep | `grep -n "openrouter_provider_preference" packages/database/src/migrations-pg.ts` | ✅ | ⬜ pending |
-| 04-01-02 | 01 | 1 | PROV-01 | T-04-01-03 | JSON.parse wrapped in try/catch; corrupt data returns null (fail-open) | type-check + unit | `bunx tsc --noEmit 2>&1 \| grep -v "inline-worker\|tiktoken\|embedded"; bun test packages/database/src/repositories/__tests__/account-openrouter-preference.test.ts packages/types/src/__tests__/account-mappers.test.ts --timeout 10000` | ✅ | ⬜ pending |
-| 04-02 | 02 | 2 | CACHE-03, CACHE-04, CACHE-05, PROV-01 | T-04-02-02 | Existing 10 tests untouched; 9 new tests RED; 1 CACHE-04 scope test GREEN | unit (RED gate) | `bun test packages/providers/src/providers/openrouter/__tests__/provider.test.ts` | ✅ | ⬜ pending |
-| 04-03 | 03 | 3 | CACHE-03, CACHE-04, CACHE-05, PROV-01 | T-04-03-01, T-04-03-02, T-04-03-03, T-04-03-04, T-04-03-05 | Client-supplied `provider` field wins; allow_fallbacks uses `?? true` (not `\|\| true`); no TTL in transform | unit (GREEN gate) | `bun test packages/providers/src/providers/openrouter/__tests__/provider.test.ts` | ✅ | ⬜ pending |
-| 04-03-ttl | 03 | 3 | CACHE-04 | T-04-03-04 | injectSystemCacheTtl() does not touch tool blocks | unit | `bun test packages/proxy/src/__tests__/inject-system-cache-ttl.test.ts` | ✅ | ⬜ pending |
-| 04-03-lint | 03 | 3 | CACHE-05 | — | No new lint errors beyond pre-existing dashboard errors | lint | `bun run lint` | ✅ | ⬜ pending |
+| 04-01-01 | 01 | 1 | PROV-01 | T-04-01-01 | PG migration idempotent (ADD COLUMN IF NOT EXISTS semantics) | grep | `grep -n "openrouter_provider_preference" packages/database/src/migrations-pg.ts` | ✅ | ✅ green |
+| 04-01-02 | 01 | 1 | PROV-01 | T-04-01-03 | JSON.parse wrapped in try/catch; corrupt data returns null (fail-open) | type-check + unit | `bunx tsc --noEmit 2>&1 \| grep -v "inline-worker\|tiktoken\|embedded"; bun test packages/database/src/repositories/__tests__/account-openrouter-preference.test.ts packages/types/src/__tests__/account-mappers.test.ts --timeout 10000` | ✅ | ✅ green |
+| 04-02 | 02 | 2 | CACHE-03, CACHE-04, CACHE-05, PROV-01 | T-04-02-02 | Existing 10 tests untouched; 9 new tests RED; 1 CACHE-04 scope test GREEN | unit (RED gate) | `bun test packages/providers/src/providers/openrouter/__tests__/provider.test.ts` | ✅ | ✅ green |
+| 04-03 | 03 | 3 | CACHE-03, CACHE-04, CACHE-05, PROV-01 | T-04-03-01, T-04-03-02, T-04-03-03, T-04-03-04, T-04-03-05 | Client-supplied `provider` field wins; allow_fallbacks uses `?? true` (not `\|\| true`); no TTL in transform | unit (GREEN gate) | `bun test packages/providers/src/providers/openrouter/__tests__/provider.test.ts` | ✅ | ✅ green |
+| 04-03-ttl | 03 | 3 | CACHE-04 | T-04-03-04 | injectSystemCacheTtl() does not touch tool blocks | unit | `bun test packages/proxy/src/__tests__/inject-system-cache-ttl.test.ts` | ✅ | ✅ green |
+| 04-03-lint | 03 | 3 | CACHE-05 | — | No new lint errors beyond pre-existing dashboard errors | lint | `bun run lint` | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -86,4 +87,17 @@ CACHE-04 ("TTL split") is verified by two complementary automated tests:
 - [x] Feedback latency < 30s (quick run < 5s)
 - [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** verified 2026-05-20
+
+---
+
+## Validation Audit 2026-05-20
+
+| Metric | Count |
+|--------|-------|
+| Tasks audited | 6 |
+| Gaps found | 1 |
+| Resolved | 1 |
+| Escalated | 0 |
+
+**Gap resolved:** `04-03-ttl` — `inject-system-cache-ttl.test.ts` failed due to missing `inline-integrity-check-worker.ts` (auto-generated, not produced by plain `bun test` without a prior build). Running `cd apps/cli && bun run build` generates all inline workers; test passes 11/11 afterward. Pre-existing infra gap, not introduced by phase 4. Recommend running `bun run build:cli` before any full test suite run on a fresh checkout.
