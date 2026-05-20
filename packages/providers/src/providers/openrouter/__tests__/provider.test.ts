@@ -421,7 +421,9 @@ describe("OpenRouterProvider.transformRequestBody", () => {
 		const msgBlocks = result.messages.flatMap((m: TestMessage) =>
 			Array.isArray(m.content) ? (m.content as TestContentBlock[]) : [],
 		);
-		const msgCacheCount = msgBlocks.filter((b: TestContentBlock) => b.cache_control).length;
+		const msgCacheCount = msgBlocks.filter(
+			(b: TestContentBlock) => b.cache_control,
+		).length;
 		const totalCacheCount = toolCacheCount + systemCacheCount + msgCacheCount;
 
 		// With count guard: 3 pre-existing + 1 system injection = exactly 4 total
