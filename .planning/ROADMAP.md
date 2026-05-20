@@ -1,6 +1,6 @@
 # Roadmap: better-ccflare (Personal Fork)
 
-**Updated:** 2026-05-20 (v1.1 Phase 4 planned)
+**Updated:** 2026-05-20 (v1.1 Phase 5 planned)
 
 ## Milestones
 
@@ -62,14 +62,19 @@ Plans:
 - [x] 04-03-PLAN.md — Implement transformRequestBody() extension to pass all tests (TDD GREEN gate)
 
 ### Phase 5: API Layer
-**Goal**: Operators can set or clear an account's OpenRouter provider preference via the REST API
+**Goal**: Operators can set or clear an account's OpenRouter provider preference via the REST API using PUT and DELETE endpoints
 **Depends on**: Phase 3
 **Requirements**: PROV-03
 **Success Criteria** (what must be TRUE):
-  1. `PATCH /api/accounts/:id` with a preference value persists it and returns the updated account
-  2. `PATCH /api/accounts/:id` with `null` clears the preference (column returns to NULL)
-  3. `GET /api/accounts/:id` returns the current `openrouter_provider_preference` value (including NULL when unset)
-**Plans**: TBD
+  1. `PUT /api/accounts/:id/openrouter-provider-preference` with `{ order: string[], allow_fallbacks?: boolean }` persists the preference and returns 204
+  2. `DELETE /api/accounts/:id/openrouter-provider-preference` clears the preference (column returns to NULL) and returns 204
+  3. Both endpoints return 404 for non-existent accounts; PUT returns 400 for invalid input
+  4. All 11 TDD tests pass; FORK PATCH annotations present on all fork-specific code blocks
+**Plans**: 2 plans
+
+Plans:
+- [ ] 05-01-PLAN.md — Write 11 failing tests for PUT set-preference and DELETE clear-preference (TDD RED gate)
+- [ ] 05-02-PLAN.md — Add DELETE handler + FORK PATCH annotation on PUT + register DELETE route (TDD GREEN gate)
 
 ### Phase 6: Dashboard UI & Maintenance Hardening
 **Goal**: Dashboard operators can configure per-account provider preferences through a UI dialog, and all v1.1 fork patches are covered by maintenance tooling
@@ -95,5 +100,5 @@ Phases execute in numeric order: 3 → 4 → 5 → 6
 | 2. Fork Maintenance Tooling | v1.0 | 1/1 | ✅ Complete | 2026-05-05 |
 | 3. Data Model | v1.1 | 0/2 | Not started | - |
 | 4. Cache Extension & Provider Injection | v1.1 | 0/3 | Not started | - |
-| 5. API Layer | v1.1 | 0/TBD | Not started | - |
+| 5. API Layer | v1.1 | 0/2 | Not started | - |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 0/TBD | Not started | - |
