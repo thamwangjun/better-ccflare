@@ -214,7 +214,10 @@ export interface AccountResponse {
 	modelFallbacks?: { [key: string]: string } | null;
 	billingType?: string | null;
 	// FORK PATCH: JSON string for OpenRouter provider.order preference
-	openrouterProviderPreference: { order: string[]; allowFallbacks: boolean } | null;
+	openrouterProviderPreference: {
+		order: string[];
+		allowFallbacks: boolean;
+	} | null;
 	sessionStats: SessionStats | null;
 }
 
@@ -399,7 +402,10 @@ export function toAccountResponse(account: Account): AccountResponse {
 	}
 
 	// FORK PATCH: parse openrouter_provider_preference JSON string to structured object
-	let openrouterProviderPreference: { order: string[]; allowFallbacks: boolean } | null = null;
+	let openrouterProviderPreference: {
+		order: string[];
+		allowFallbacks: boolean;
+	} | null = null;
 	if (account.openrouter_provider_preference) {
 		try {
 			const parsed = JSON.parse(account.openrouter_provider_preference);
