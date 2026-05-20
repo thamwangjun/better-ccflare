@@ -572,4 +572,31 @@ describe("OpenRouterProvider.transformRequestBody", () => {
 
 		expect(result.provider).toBeUndefined();
 	});
+
+	// ─────────────────────────────────────────────────────────────────────────────
+	// transformRequestBody — CACHE-05: no model-prefix gate
+	// ─────────────────────────────────────────────────────────────────────────────
+
+	it("injects cache_control on non-anthropic model without model-prefix gate", async () => {
+		const provider = new OpenRouterProvider();
+		const body = {
+			model: "openai/gpt-4o",
+			messages: [{ role: "user", content: "hello" }],
+			max_tokens: 10,
+		};
+		const request = new Request("https://openrouter.ai/api/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+		const result = await transformed.json();
+
+		const lastMsg = result.messages[result.messages.length - 1];
+		const lastBlock = Array.isArray(lastMsg.content)
+			? lastMsg.content[lastMsg.content.length - 1]
+			: null;
+		expect(lastBlock?.cache_control).toBeDefined();
+	});
 });

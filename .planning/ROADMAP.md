@@ -51,7 +51,7 @@ Plans:
 **Requirements**: CACHE-03, CACHE-04, CACHE-05, PROV-01
 **Success Criteria** (what must be TRUE):
   1. A request with 4 eligible content blocks receives exactly 4 `cache_control` blocks — the proxy never injects a 5th
-  2. Tools and system blocks carry `ttl: "1h"`; user message and last assistant turn blocks carry `{ type: "ephemeral" }` (5-min)
+  2. System blocks carry `ttl: "1h"`; tools, user message, and last assistant turn blocks carry `{ type: "ephemeral" }` (5-min) — TTL management is the exclusive responsibility of `injectSystemCacheTtl()` and applies only to system blocks
   3. When an account has `openrouter_provider_preference` set, the proxy injects `provider.order` with `allow_fallbacks: true`; when the incoming request already contains a `provider` field, it is left untouched
   4. Regression tests cover: 4th breakpoint injection, count guard (no inject when already at 4), TTL split, and correct behavior across model types without a model-prefix gate
 **Plans**: 3 plans
