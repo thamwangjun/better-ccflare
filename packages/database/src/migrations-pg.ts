@@ -21,22 +21,6 @@ async function columnExists(
 }
 
 /**
- * Check if a table exists in PostgreSQL
- */
-async function _tableExists(
-	adapter: BunSqlAdapter,
-	table: string,
-): Promise<boolean> {
-	const result = await adapter.get<{ exists: number }>(
-		`SELECT COUNT(*) as exists
-		 FROM information_schema.tables
-		 WHERE table_name = $1`,
-		[table],
-	);
-	return (result?.exists ?? 0) > 0;
-}
-
-/**
  * Ensure the full schema exists for PostgreSQL
  */
 export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
