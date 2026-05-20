@@ -309,8 +309,9 @@ function toNum(v: unknown): number {
 	return Number(v) || 0;
 }
 function toNumOrNull(v: unknown): number | null {
+	if (v == null) return null;
 	const n = Number(v);
-	return Number.isFinite(n) && n !== 0 ? n : v != null && v !== 0 ? n : null;
+	return Number.isFinite(n) ? n : null;
 }
 
 // Type mappers
