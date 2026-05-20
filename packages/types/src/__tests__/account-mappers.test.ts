@@ -105,15 +105,35 @@ describe("toAccount() — openrouter_provider_preference mapping", () => {
 });
 
 describe("toAccountResponse() — openrouterProviderPreference parsing", () => {
-	it("parses a valid JSON array string to string[]", () => {
+	it("parses a valid structured JSON object { order, allow_fallbacks } to { order, allowFallbacks }", () => {
+		const account = makeAccount({
+			openrouter_provider_preference:
+				'{"order":["openai","anthropic"],"allow_fallbacks":true}',
+		});
+		const response = toAccountResponse(account);
+		expect(response.openrouterProviderPreference).toEqual({
+			order: ["openai", "anthropic"],
+			allowFallbacks: true,
+		});
+	});
+
+	it("defaults allowFallbacks to true when allow_fallbacks is absent", () => {
+		const account = makeAccount({
+			openrouter_provider_preference: '{"order":["openai"]}',
+		});
+		const response = toAccountResponse(account);
+		expect(response.openrouterProviderPreference).toEqual({
+			order: ["openai"],
+			allowFallbacks: true,
+		});
+	});
+
+	it("returns null for a bare JSON array (old format without .order property)", () => {
 		const account = makeAccount({
 			openrouter_provider_preference: '["openai","anthropic"]',
 		});
 		const response = toAccountResponse(account);
-		expect(response.openrouterProviderPreference).toEqual([
-			"openai",
-			"anthropic",
-		]);
+		expect(response.openrouterProviderPreference).toBeNull();
 	});
 
 	it("returns null when openrouter_provider_preference is null", () => {
