@@ -3591,6 +3591,7 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
  * PUT /api/accounts/:id/openrouter-provider-preference
  * Body: { order: string[], allow_fallbacks?: boolean }
  */
+// FORK PATCH: set per-account OpenRouter provider preference
 export function createAccountOpenrouterProviderPreferenceHandler(
 	dbOps: DatabaseOperations,
 ) {
@@ -3650,6 +3651,38 @@ export function createAccountOpenrouterProviderPreferenceHandler(
 				error instanceof Error
 					? error
 					: new Error("Failed to update OpenRouter provider preference"),
+			);
+		}
+	};
+}
+
+// FORK PATCH: clear per-account OpenRouter provider preference
+export function createAccountOpenrouterProviderPreferenceDeleteHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (_req: Request, accountId: string): Promise<Response> => {
+		try {
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			await dbOps.setAccountOpenrouterProviderPreference(accountId, null);
+
+			log.info(`Cleared OpenRouter provider preference for account ${accountId}`);
+
+			return new Response(null, { status: 204 });
+		} catch (error) {
+			log.error("Account OpenRouter provider preference delete error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to clear OpenRouter provider preference"),
 			);
 		}
 	};
