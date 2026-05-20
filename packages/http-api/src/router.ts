@@ -7,10 +7,11 @@ import {
 	createAccountAutoRefreshHandler,
 	createAccountBillingTypeHandler,
 	createAccountCustomEndpointUpdateHandler,
-	createAccountOpenrouterProviderPreferenceHandler,
 	createAccountForceResetRateLimitHandler,
 	createAccountModelFallbacksUpdateHandler,
 	createAccountModelMappingsUpdateHandler,
+	createAccountOpenrouterProviderPreferenceDeleteHandler,
+	createAccountOpenrouterProviderPreferenceHandler,
 	createAccountPauseHandler,
 	createAccountPeakHoursPauseHandler,
 	createAccountPriorityUpdateHandler,
@@ -626,6 +627,21 @@ export class APIRouter {
 				return await this.wrapHandler((req) =>
 					openrouterPrefHandler(req, accountId),
 				)(req, url);
+			}
+
+			// FORK PATCH: clear OpenRouter provider preference
+			if (
+				path.endsWith("/openrouter-provider-preference") &&
+				method === "DELETE"
+			) {
+				const deleteHandler =
+					createAccountOpenrouterProviderPreferenceDeleteHandler(
+						this.context.dbOps,
+					);
+				return await this.wrapHandler((req) => deleteHandler(req, accountId))(
+					req,
+					url,
+				);
 			}
 
 			// Account removal
