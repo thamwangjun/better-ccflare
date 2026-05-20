@@ -59,7 +59,7 @@ Plans:
 Plans:
 - [x] 04-01-PLAN.md — Fix PG migration gap + update type chain to structured object shape (execute)
 - [x] 04-02-PLAN.md — Write 9 failing tests for count guard, 4th breakpoint, provider injection (TDD RED gate)
-- [ ] 04-03-PLAN.md — Implement transformRequestBody() extension to pass all tests (TDD GREEN gate)
+- [x] 04-03-PLAN.md — Implement transformRequestBody() extension to pass all tests (TDD GREEN gate)
 
 ### Phase 5: API Layer
 **Goal**: Operators can set or clear an account's OpenRouter provider preference via the REST API
