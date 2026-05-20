@@ -107,6 +107,11 @@ describe("AccountRepository — openrouter provider preference", () => {
 		db.close();
 	});
 
+	// NOTE: The HTTP API (toAccountResponse) only surfaces preferences stored in the
+	// {"order":[...], "allow_fallbacks": bool} object format. A bare JSON array string
+	// (e.g. '["openai","anthropic"]') is persisted correctly by the repository but will
+	// be returned as null by the API layer. Always use the object format when writing
+	// preferences that must be readable through the HTTP API or dashboard.
 	describe("setOpenrouterProviderPreference(id, value)", () => {
 		it("persists the JSON string to the DB column", async () => {
 			insertAccount(db, "acc-1");
