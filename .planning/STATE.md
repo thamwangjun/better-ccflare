@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: Extended caching for openrouter models
-status: executing
+status: ready_to_plan
 stopped_at: Phase 5 context gathered
 last_updated: "2026-05-20T09:12:47.270Z"
 last_activity: 2026-05-20 -- Phase 05 execution started
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 7
   completed_plans: 5
-  percent: 71
+  percent: 75
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: `.planning/PROJECT.md` (updated 2026-05-05)
 
 ## Current Position
 
-Phase: 05 (api-layer) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 05
-Last activity: 2026-05-20 -- Phase 05 execution started
+Phase: 6
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-05-20
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -36,7 +36,7 @@ Progress: [░░░░░░░░░░] 0%
 
 **Velocity:**
 
-- Total plans completed: 9 (v1.0)
+- Total plans completed: 11 (v1.0)
 - Average duration: —
 - Total execution time: —
 
@@ -48,6 +48,7 @@ Progress: [░░░░░░░░░░] 0%
 | v1.0 Phase 2 | 1 | — | — |
 | 03 | 2 | - | - |
 | 04 | 3 | - | - |
+| 05 | 2 | - | - |
 
 **Recent Trend:**
 
