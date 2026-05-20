@@ -6,6 +6,38 @@ const OPENROUTER_DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1";
 
 const log = new Logger("OpenRouterProvider");
 
+// FORK PATCH: pre-count existing cache_control blocks across all injection sites (D-05)
+function countExistingCacheControlBlocks(body: any): number {
+	let count = 0;
+	if (Array.isArray(body.tools)) {
+		for (const tool of body.tools) {
+			if (tool && typeof tool === "object" && tool.cache_control) count++;
+		}
+	}
+	if (Array.isArray(body.system)) {
+		for (const block of body.system) {
+			if (block && typeof block === "object" && block.cache_control) count++;
+		}
+	} else if (
+		body.system &&
+		typeof body.system === "object" &&
+		(body.system as any).cache_control
+	) {
+		count++;
+	}
+	if (Array.isArray(body.messages)) {
+		for (const msg of body.messages) {
+			if (Array.isArray(msg.content)) {
+				for (const block of msg.content) {
+					if (block && typeof block === "object" && block.cache_control)
+						count++;
+				}
+			}
+		}
+	}
+	return count;
+}
+
 export class OpenRouterProvider extends AnthropicCompatibleProvider {
 	constructor() {
 		super({
@@ -36,7 +68,7 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		return `${baseUrl}${cleanPathname}${search}`;
 	}
 
-	// FORK PATCH: 3-breakpoint cache_control injection (tools, system, last assistant turn)
+	// FORK PATCH: 4-breakpoint cache_control injection with count guard (tools, system, last assistant turn, last user message)
 	override async transformRequestBody(
 		request: Request,
 		account?: Account,
@@ -47,33 +79,49 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		try {
 			const body = await mapped.clone().json();
 			if (body && typeof body === "object") {
+				// FORK PATCH: pre-count existing cache_control blocks (D-05)
+				let remaining = Math.max(0, 4 - countExistingCacheControlBlocks(body));
+
 				// Breakpoint 1: last tool in tools[] (most stable — invalidates everything below)
-				if (Array.isArray(body.tools) && body.tools.length > 0) {
+				if (
+					remaining > 0 &&
+					Array.isArray(body.tools) &&
+					body.tools.length > 0
+				) {
 					const lastTool = body.tools[body.tools.length - 1];
 					if (lastTool && typeof lastTool === "object") {
-						(lastTool as any).cache_control = { type: "ephemeral" };
+						if (!(lastTool as any).cache_control) {
+							(lastTool as any).cache_control = { type: "ephemeral" };
+							remaining--;
+						}
 					}
 				}
 
 				// Breakpoint 2: last content block in system (or convert string to array)
-				if (typeof body.system === "string" && body.system.length > 0) {
-					body.system = [
-						{
-							type: "text",
-							text: body.system,
-							cache_control: { type: "ephemeral" },
-						},
-					];
-				} else if (Array.isArray(body.system) && body.system.length > 0) {
-					const lastBlock = body.system[body.system.length - 1];
-					if (lastBlock && typeof lastBlock === "object") {
-						(lastBlock as any).cache_control = { type: "ephemeral" };
+				if (remaining > 0) {
+					if (typeof body.system === "string" && body.system.length > 0) {
+						body.system = [
+							{
+								type: "text",
+								text: body.system,
+								cache_control: { type: "ephemeral" },
+							},
+						];
+						remaining--;
+					} else if (Array.isArray(body.system) && body.system.length > 0) {
+						const lastBlock = body.system[body.system.length - 1];
+						if (lastBlock && typeof lastBlock === "object") {
+							if (!(lastBlock as any).cache_control) {
+								(lastBlock as any).cache_control = { type: "ephemeral" };
+								remaining--;
+							}
+						}
 					}
 				}
 
 				// Breakpoint 3: last content block of last assistant turn in messages[]
 				// Enables conversation history caching for agentic/Claude Code sessions
-				if (Array.isArray(body.messages)) {
+				if (remaining > 0 && Array.isArray(body.messages)) {
 					const lastAssistant = [...body.messages]
 						.reverse()
 						.find((m: any) => m.role === "assistant");
@@ -85,7 +133,10 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 							const lastBlock =
 								lastAssistant.content[lastAssistant.content.length - 1];
 							if (lastBlock && typeof lastBlock === "object") {
-								(lastBlock as any).cache_control = { type: "ephemeral" };
+								if (!(lastBlock as any).cache_control) {
+									(lastBlock as any).cache_control = { type: "ephemeral" };
+									remaining--;
+								}
 							}
 						} else if (
 							typeof lastAssistant.content === "string" &&
@@ -98,11 +149,63 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 									cache_control: { type: "ephemeral" },
 								},
 							];
+							remaining--;
+						}
+					}
+				}
+
+				// FORK PATCH: Breakpoint 4 — last user message (D-03, D-04)
+				if (remaining > 0 && Array.isArray(body.messages)) {
+					const lastUser = [...body.messages]
+						.reverse()
+						.find((m: any) => m.role === "user");
+					if (lastUser) {
+						if (
+							Array.isArray(lastUser.content) &&
+							lastUser.content.length > 0
+						) {
+							const lastBlock = lastUser.content[lastUser.content.length - 1];
+							if (lastBlock && typeof lastBlock === "object") {
+								if (!(lastBlock as any).cache_control) {
+									(lastBlock as any).cache_control = { type: "ephemeral" };
+									remaining--;
+								}
+							}
+						} else if (
+							typeof lastUser.content === "string" &&
+							lastUser.content.length > 0
+						) {
+							lastUser.content = [
+								{
+									type: "text",
+									text: lastUser.content,
+									cache_control: { type: "ephemeral" },
+								},
+							];
+							remaining--;
 						}
 					}
 				}
 
 				log.debug("Injected cache_control breakpoints into OpenRouter request");
+
+				// FORK PATCH: inject provider preference from account settings (PROV-01)
+				if (account?.openrouter_provider_preference && !("provider" in body)) {
+					try {
+						const pref = JSON.parse(account.openrouter_provider_preference);
+						if (Array.isArray(pref.order) && pref.order.length > 0) {
+							body.provider = {
+								order: pref.order,
+								allow_fallbacks: pref.allow_fallbacks ?? true,
+							};
+						}
+					} catch {
+						log.warn(
+							"Failed to parse openrouter_provider_preference; skipping provider injection",
+						);
+					}
+				}
+
 				return new Request(mapped.url, {
 					method: mapped.method,
 					headers: mapped.headers,
