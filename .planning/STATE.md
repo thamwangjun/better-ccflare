@@ -4,8 +4,8 @@ milestone: v1.1
 milestone_name: Extended caching for openrouter models
 status: executing
 stopped_at: Phase 4 context gathered
-last_updated: "2026-05-20T06:01:46.756Z"
-last_activity: 2026-05-20 -- Phase 04 planning complete
+last_updated: "2026-05-20T06:04:03.350Z"
+last_activity: 2026-05-20 -- Phase 04 execution started
 progress:
   total_phases: 4
   completed_phases: 1
@@ -21,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-05-05)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Phase 03 — data-model
+**Current focus:** Phase 04 — cache-extension-provider-injection
 
 ## Current Position
 
-Phase: 4
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-20 -- Phase 04 planning complete
+Phase: 04 (cache-extension-provider-injection) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 04
+Last activity: 2026-05-20 -- Phase 04 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
