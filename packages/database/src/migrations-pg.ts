@@ -74,7 +74,8 @@ export async function ensureSchemaPg(adapter: BunSqlAdapter): Promise<void> {
 			billing_type TEXT DEFAULT NULL,
 			refresh_token_issued_at BIGINT,
 			rate_limited_reason TEXT,
-			rate_limited_at BIGINT
+			rate_limited_at BIGINT,
+			openrouter_provider_preference TEXT DEFAULT NULL
 		)
 	`);
 
@@ -355,6 +356,13 @@ export async function runMigrationsPg(adapter: BunSqlAdapter): Promise<void> {
 			table: "accounts",
 			column: "pause_reason",
 			definition: "ALTER TABLE accounts ADD COLUMN pause_reason TEXT",
+		},
+		// FORK PATCH: add openrouter_provider_preference for per-account provider.order injection
+		{
+			table: "accounts",
+			column: "openrouter_provider_preference",
+			definition:
+				"ALTER TABLE accounts ADD COLUMN openrouter_provider_preference TEXT DEFAULT NULL",
 		},
 		{
 			table: "requests",

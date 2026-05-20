@@ -510,7 +510,17 @@ export function createAccountsListHandler(
 						if (!account.openrouter_provider_preference) return null;
 						try {
 							const parsed = JSON.parse(account.openrouter_provider_preference);
-							return Array.isArray(parsed) ? parsed : null;
+							if (
+								parsed &&
+								typeof parsed === "object" &&
+								Array.isArray(parsed.order)
+							) {
+								return {
+									order: parsed.order,
+									allowFallbacks: parsed.allow_fallbacks ?? true,
+								};
+							}
+							return null;
 						} catch {
 							return null;
 						}

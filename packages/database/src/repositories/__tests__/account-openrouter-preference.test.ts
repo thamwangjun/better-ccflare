@@ -59,7 +59,10 @@ function makeDb(): { db: Database; repo: AccountRepository } {
 			billing_type TEXT,
 			pause_reason TEXT,
 			refresh_token_issued_at INTEGER,
-			openrouter_provider_preference TEXT
+			openrouter_provider_preference TEXT,
+			rate_limited_reason TEXT,
+			rate_limited_at INTEGER,
+			peak_hours_pause_enabled INTEGER DEFAULT 0
 		)
 	`);
 
