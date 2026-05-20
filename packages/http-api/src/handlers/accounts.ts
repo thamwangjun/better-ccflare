@@ -23,18 +23,22 @@ import {
 } from "@better-ccflare/http-common";
 import { Logger } from "@better-ccflare/logger";
 import {
+	type AlibabaCodingPlanUsageData,
 	type AnyUsageData,
 	fetchUsageData,
 	getRepresentativeAlibabaCodingPlanUtilization,
 	getRepresentativeAlibabaCodingPlanWindow,
 	getRepresentativeKiloUtilization,
 	getRepresentativeKiloWindow,
+	type KiloUsageData,
 	getRepresentativeNanoGPTUtilization,
 	getRepresentativeNanoGPTWindow,
+	type NanoGPTUsageData,
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
 	getRepresentativeZaiUtilization,
 	getRepresentativeZaiWindow,
+	type ZaiUsageData,
 	parseCodexUsageHeaders,
 	type UsageData,
 	usageCache,
@@ -329,8 +333,12 @@ export function createAccountsListHandler(
 						"monthly" in usageData;
 					if (isNanoGPTData) {
 						try {
-							usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
-							usageWindow = getRepresentativeNanoGPTWindow(usageData);
+							usageUtilization = getRepresentativeNanoGPTUtilization(
+								usageData as NanoGPTUsageData,
+							);
+							usageWindow = getRepresentativeNanoGPTWindow(
+								usageData as NanoGPTUsageData,
+							);
 							fullUsageData = usageData as FullUsageData;
 						} catch (error) {
 							log.warn(
@@ -345,8 +353,12 @@ export function createAccountsListHandler(
 						"time_limit" in usageData || "tokens_limit" in usageData;
 					if (isZaiData) {
 						try {
-							usageUtilization = getRepresentativeZaiUtilization(usageData);
-							usageWindow = getRepresentativeZaiWindow(usageData);
+							usageUtilization = getRepresentativeZaiUtilization(
+								usageData as ZaiUsageData,
+							);
+							usageWindow = getRepresentativeZaiWindow(
+								usageData as ZaiUsageData,
+							);
 							fullUsageData = usageData as FullUsageData;
 						} catch (error) {
 							log.warn(
@@ -360,8 +372,12 @@ export function createAccountsListHandler(
 					const isKiloData = "remainingUsd" in usageData;
 					if (isKiloData) {
 						try {
-							usageUtilization = getRepresentativeKiloUtilization(usageData);
-							usageWindow = getRepresentativeKiloWindow(usageData);
+							usageUtilization = getRepresentativeKiloUtilization(
+								usageData as KiloUsageData,
+							);
+							usageWindow = getRepresentativeKiloWindow(
+								usageData as KiloUsageData,
+							);
 							fullUsageData = usageData as FullUsageData;
 						} catch (error) {
 							log.warn(
@@ -376,9 +392,12 @@ export function createAccountsListHandler(
 						"five_hour" in usageData && "weekly" in usageData;
 					if (isAlibabaData) {
 						try {
-							usageUtilization =
-								getRepresentativeAlibabaCodingPlanUtilization(usageData);
-							usageWindow = getRepresentativeAlibabaCodingPlanWindow(usageData);
+							usageUtilization = getRepresentativeAlibabaCodingPlanUtilization(
+								usageData as AlibabaCodingPlanUsageData,
+							);
+							usageWindow = getRepresentativeAlibabaCodingPlanWindow(
+								usageData as AlibabaCodingPlanUsageData,
+							);
 							fullUsageData = usageData as FullUsageData;
 						} catch (error) {
 							log.warn(
@@ -3595,7 +3614,9 @@ export function createAccountOpenrouterProviderPreferenceHandler(
 
 			// allow_fallbacks is optional boolean, default true
 			const allowFallbacks =
-				body.allow_fallbacks !== undefined ? Boolean(body.allow_fallbacks) : true;
+				body.allow_fallbacks !== undefined
+					? Boolean(body.allow_fallbacks)
+					: true;
 
 			// Check if account exists
 			const db = dbOps.getAdapter();
@@ -3618,7 +3639,9 @@ export function createAccountOpenrouterProviderPreferenceHandler(
 				preferenceJson,
 			);
 
-			log.info(`Updated OpenRouter provider preference for account ${accountId}`);
+			log.info(
+				`Updated OpenRouter provider preference for account ${accountId}`,
+			);
 
 			return new Response(null, { status: 204 });
 		} catch (error) {
