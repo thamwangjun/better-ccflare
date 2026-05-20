@@ -55,11 +55,13 @@ Exceptions:
 
 All sizes map to Tailwind utility classes. No custom font declarations for this phase.
 
+Declared weight scale: **2 weights only** — font-normal (400) for body/metadata, font-semibold (600) for labels/headings.
+
 | Role | Size | Tailwind | Weight | Tailwind | Line Height | Usage |
 |------|------|----------|--------|----------|-------------|-------|
 | Body / metadata | 14px | `text-sm` | 400 (regular) | `font-normal` | 1.5 | Account list metadata rows, dialog description text |
-| Label / helper | 12px | `text-xs` | 500 (medium) | `font-medium` | 1.5 | Form labels inside dialog (`Label` component), badge text, helper/hint text |
-| Section heading | 14px | `text-sm` | 500 (medium) | `font-medium` | 1.4 | Dialog section sub-headings (e.g. "Model Mappings" h4 in template) |
+| Label / helper | 12px | `text-xs` | 600 (semibold) | `font-semibold` | 1.5 | Form labels inside dialog (`Label` component), badge text, helper/hint text |
+| Section heading | 14px | `text-sm` | 600 (semibold) | `font-semibold` | 1.4 | Dialog section sub-headings (e.g. "Model Mappings" h4 in template) |
 | Dialog title | 18px | `text-lg` (shadcn DialogTitle default) | 600 (semibold) | `font-semibold` | 1.2 | `DialogTitle` — "Provider Preferences" |
 
 Muted/secondary text: `text-muted-foreground` (hsl 240 3.8% 46.1% light / hsl 220 9% 55% dark). Applied via Tailwind class, not inline style.
@@ -100,7 +102,7 @@ Accent must NOT be used for: body text, labels, disabled states, helper text, or
 | Provider order placeholder | "e.g., anthropic/claude-3-5-sonnet, openai/gpt-4o" | CONTEXT.md Claude's Discretion; RESEARCH.md skeleton line 503 |
 | Provider order helper text | "Comma-separated list. Leave empty to clear the preference." | RESEARCH.md skeleton line 505 |
 | Allow fallbacks label | "Allow fallbacks" | CONTEXT.md D-01 (locked) |
-| Cancel button | "Cancel" | Existing dialog pattern (AccountModelMappingsDialog line 177) |
+| Cancel button | "Discard Changes" | Context-specific label — this dialog discards a provider preference configuration edit |
 | Save button (idle) | "Save Changes" | Existing dialog pattern (AccountModelMappingsDialog line 183) |
 | Save button (loading) | "Saving..." | Existing dialog pattern (AccountModelMappingsDialog line 183) |
 | Dropdown item tooltip (preference set) | "Provider order: {order.join(', ')}" | RESEARCH.md Pattern 2 |
@@ -125,7 +127,7 @@ All components already present in the project. No new installs required.
 | `Input` | `components/ui/input.tsx` | Provider order comma-separated text field |
 | `Label` | `components/ui/label.tsx` | "Provider Order" and "Allow fallbacks" labels |
 | `Switch` | `components/ui/switch.tsx` (Radix `@radix-ui/react-switch`) | Allow fallbacks toggle |
-| `Button` | `components/ui/button.tsx` | Cancel (variant="outline") and Save (default/primary) |
+| `Button` | `components/ui/button.tsx` | Discard Changes (variant="outline") and Save (default/primary) |
 | `DropdownMenuItem` | `@radix-ui/react-dropdown-menu` (via `components/ui/dropdown-menu.tsx`) | "Provider Preferences" entry in AccountListItem context menu |
 | `Settings2` (or `Hash`) | `lucide-react` | Icon for the new dropdown item |
 
@@ -139,10 +141,10 @@ All components already present in the project. No new installs required.
 
 - Entry: User clicks "Provider Preferences" in the AccountListItem dropdown menu. Gated: only rendered when `account.provider === "openrouter"`.
 - Open: Dialog becomes visible. `useEffect` fires on `account` prop, populating `providerOrder` from `account.openrouterProviderPreference.order.join(", ")` and `allowFallbacks` from `account.openrouterProviderPreference.allowFallbacks`. If preference is null: `providerOrder = ""`, `allowFallbacks = true`.
-- Cancel: Calls `onOpenChange(false)`. No state mutation. Dialog closes.
+- Cancel ("Discard Changes"): Calls `onOpenChange(false)`. No state mutation. Dialog closes.
 - Save (non-empty order): Parses comma-separated input, calls `onSetProviderPreference(account.id, parsedOrder, allowFallbacks)` → PUT. On success, calls `onOpenChange(false)`.
 - Save (empty order): Calls `onClearProviderPreference(account.id)` → DELETE. On success, calls `onOpenChange(false)`.
-- Loading state: Both Cancel and Save buttons are `disabled={isLoading}`. Save button label changes to "Saving..." during in-flight request.
+- Loading state: Both "Discard Changes" and Save buttons are `disabled={isLoading}`. Save button label changes to "Saving..." during in-flight request.
 - Error: Catch block calls `console.error`. Dialog remains open (does not auto-close on error). AccountsTab catches and sets `actionError` via the `setActionError(formatError(err)); throw err` pattern.
 
 ### Switch Interaction
@@ -178,7 +180,7 @@ DialogContent (sm:max-w-[500px])
       Label htmlFor="allow-fallbacks"
       Switch id="allow-fallbacks"
   DialogFooter.mt-2.shrink-0
-    Button[variant="outline"]  Cancel
+    Button[variant="outline"]  Discard Changes
     Button                     Save Changes / Saving...
 ```
 
