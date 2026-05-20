@@ -7,6 +7,7 @@ import {
 	createAccountAutoRefreshHandler,
 	createAccountBillingTypeHandler,
 	createAccountCustomEndpointUpdateHandler,
+	createAccountOpenrouterProviderPreferenceHandler,
 	createAccountForceResetRateLimitHandler,
 	createAccountModelFallbacksUpdateHandler,
 	createAccountModelMappingsUpdateHandler,
@@ -612,6 +613,18 @@ export class APIRouter {
 				);
 				return await this.wrapHandler((req) =>
 					modelFallbacksHandler(req, accountId),
+				)(req, url);
+			}
+
+			// Account OpenRouter provider preference update
+			if (
+				path.endsWith("/openrouter-provider-preference") &&
+				method === "PUT"
+			) {
+				const openrouterPrefHandler =
+					createAccountOpenrouterProviderPreferenceHandler(this.context.dbOps);
+				return await this.wrapHandler((req) =>
+					openrouterPrefHandler(req, accountId),
 				)(req, url);
 			}
 

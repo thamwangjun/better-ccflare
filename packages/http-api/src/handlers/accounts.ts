@@ -3574,3 +3574,68 @@ export function createAccountRefreshUsageHandler(dbOps: DatabaseOperations) {
 		}
 	};
 }
+
+/**
+ * Create an account OpenRouter provider preference update handler
+ * PUT /api/accounts/:id/openrouter-provider-preference
+ * Body: { order: string[], allow_fallbacks?: boolean }
+ */
+export function createAccountOpenrouterProviderPreferenceHandler(
+	dbOps: DatabaseOperations,
+) {
+	return async (req: Request, accountId: string): Promise<Response> => {
+		try {
+			const body = await req.json();
+
+			// Validate order is a non-empty array of non-empty strings
+			if (!Array.isArray(body.order) || body.order.length === 0) {
+				return errorResponse(
+					BadRequest("order must be a non-empty array of provider names"),
+				);
+			}
+			for (const item of body.order) {
+				if (typeof item !== "string" || item.trim() === "") {
+					return errorResponse(
+						BadRequest("Each element of order must be a non-empty string"),
+					);
+				}
+			}
+
+			// allow_fallbacks is optional boolean, default true
+			const allowFallbacks =
+				body.allow_fallbacks !== undefined ? Boolean(body.allow_fallbacks) : true;
+
+			// Check if account exists
+			const db = dbOps.getAdapter();
+			const account = await db.get<{ name: string }>(
+				"SELECT name FROM accounts WHERE id = ?",
+				[accountId],
+			);
+
+			if (!account) {
+				return errorResponse(NotFound("Account not found"));
+			}
+
+			const preferenceJson = JSON.stringify({
+				order: body.order,
+				allow_fallbacks: allowFallbacks,
+			});
+
+			await dbOps.setAccountOpenrouterProviderPreference(
+				accountId,
+				preferenceJson,
+			);
+
+			log.info(`Updated OpenRouter provider preference for account ${accountId}`);
+
+			return new Response(null, { status: 204 });
+		} catch (error) {
+			log.error("Account OpenRouter provider preference update error:", error);
+			return errorResponse(
+				error instanceof Error
+					? error
+					: new Error("Failed to update OpenRouter provider preference"),
+			);
+		}
+	};
+}
