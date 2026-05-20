@@ -14,7 +14,7 @@ async function columnExists(
 	const result = await adapter.get<{ exists: number }>(
 		`SELECT COUNT(*) as exists
 		 FROM information_schema.columns
-		 WHERE table_name = ? AND column_name = ?`,
+		 WHERE table_name = $1 AND column_name = $2`,
 		[table, column],
 	);
 	return (result?.exists ?? 0) > 0;
@@ -30,7 +30,7 @@ async function _tableExists(
 	const result = await adapter.get<{ exists: number }>(
 		`SELECT COUNT(*) as exists
 		 FROM information_schema.tables
-		 WHERE table_name = ?`,
+		 WHERE table_name = $1`,
 		[table],
 	);
 	return (result?.exists ?? 0) > 0;
