@@ -25,8 +25,16 @@ import { Logger } from "@better-ccflare/logger";
 import {
 	type AnyUsageData,
 	fetchUsageData,
+	getRepresentativeAlibabaCodingPlanUtilization,
+	getRepresentativeAlibabaCodingPlanWindow,
+	getRepresentativeKiloUtilization,
+	getRepresentativeKiloWindow,
+	getRepresentativeNanoGPTUtilization,
+	getRepresentativeNanoGPTWindow,
 	getRepresentativeUtilization,
 	getRepresentativeWindow,
+	getRepresentativeZaiUtilization,
+	getRepresentativeZaiWindow,
 	parseCodexUsageHeaders,
 	type UsageData,
 	usageCache,
@@ -321,10 +329,6 @@ export function createAccountsListHandler(
 						"monthly" in usageData;
 					if (isNanoGPTData) {
 						try {
-							const {
-								getRepresentativeNanoGPTUtilization,
-								getRepresentativeNanoGPTWindow,
-							} = require("@better-ccflare/providers");
 							usageUtilization = getRepresentativeNanoGPTUtilization(usageData);
 							usageWindow = getRepresentativeNanoGPTWindow(usageData);
 							fullUsageData = usageData as FullUsageData;
@@ -341,10 +345,6 @@ export function createAccountsListHandler(
 						"time_limit" in usageData || "tokens_limit" in usageData;
 					if (isZaiData) {
 						try {
-							const {
-								getRepresentativeZaiUtilization,
-								getRepresentativeZaiWindow,
-							} = require("@better-ccflare/providers");
 							usageUtilization = getRepresentativeZaiUtilization(usageData);
 							usageWindow = getRepresentativeZaiWindow(usageData);
 							fullUsageData = usageData as FullUsageData;
@@ -360,10 +360,6 @@ export function createAccountsListHandler(
 					const isKiloData = "remainingUsd" in usageData;
 					if (isKiloData) {
 						try {
-							const {
-								getRepresentativeKiloUtilization,
-								getRepresentativeKiloWindow,
-							} = require("@better-ccflare/providers");
 							usageUtilization = getRepresentativeKiloUtilization(usageData);
 							usageWindow = getRepresentativeKiloWindow(usageData);
 							fullUsageData = usageData as FullUsageData;
@@ -380,10 +376,6 @@ export function createAccountsListHandler(
 						"five_hour" in usageData && "weekly" in usageData;
 					if (isAlibabaData) {
 						try {
-							const {
-								getRepresentativeAlibabaCodingPlanUtilization,
-								getRepresentativeAlibabaCodingPlanWindow,
-							} = require("@better-ccflare/providers");
 							usageUtilization =
 								getRepresentativeAlibabaCodingPlanUtilization(usageData);
 							usageWindow = getRepresentativeAlibabaCodingPlanWindow(usageData);
