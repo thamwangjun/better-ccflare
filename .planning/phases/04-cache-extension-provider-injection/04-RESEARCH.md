@@ -44,7 +44,7 @@ None — discussion stayed within phase scope.
 | ID | Description | Research Support |
 |----|-------------|-----------------|
 | CACHE-03 | Proxy injects `cache_control` on last user message (4th breakpoint) with count guard never exceeding 4 total | D-03 through D-07; injection logic in `transformRequestBody()`; count is pre-computed across tools, system, and messages |
-| CACHE-04 | TTL split: tools and system carry `ttl: "1h"`; user message and last assistant turn carry `{ type: "ephemeral" }` | D-01, D-02: TTL is NOT set by `transformRequestBody()` — `injectSystemCacheTtl()` in `proxy.ts` handles tools/system TTL upgrade AFTER transform runs |
+| CACHE-04 | TTL split: **system blocks only** carry `ttl: "1h"` (tools keep `{ type: "ephemeral" }`); user message and last assistant turn also carry `{ type: "ephemeral" }` | D-01, D-02: TTL is NOT set by `transformRequestBody()` — `injectSystemCacheTtl()` in `proxy.ts` upgrades **system blocks only** AFTER transform runs (confirmed: proxy.ts line 564 guards on `Array.isArray(body.system)`) |
 | CACHE-05 | Regression tests for 4th breakpoint injection, count guard, TTL split behavior, all model types | Existing 10-test suite in `provider.test.ts` is baseline; 6+ new test cases required |
 | PROV-01 | Proxy injects `body.provider = { order: [...], allow_fallbacks: true }` from account preference when no `provider` field present | D-08 through D-12; type chain update in `account.ts` required first |
 
@@ -183,7 +183,7 @@ if (lastUser && remaining > 0) {
 ```typescript
 // [VERIFIED: from D-11, D-12, D-08 decisions]
 // FORK PATCH: inject provider preference from account settings
-if (account?.openrouter_provider_preference && !body.provider) {
+if (account?.openrouter_provider_preference && !("provider" in body)) {
   try {
     const pref = JSON.parse(account.openrouter_provider_preference) as {
       order: string[];
@@ -290,13 +290,15 @@ The current code (lines 54, 69, 86, 89) always overwrites `cache_control`. Under
 
 ### Finding 4: TTL Split Behavior (CACHE-04) — Already Correct by Architecture
 
-Per CACHE-04, tools and system blocks carry `ttl: "1h"` while user message and assistant turn blocks carry `{ type: "ephemeral" }`. This is NOT something Phase 4 implements — it is the existing behavior:
+Per CACHE-04, the TTL split behavior is: **system blocks only** carry `ttl: "1h"` (added by `injectSystemCacheTtl()`); tools, user message, and assistant turn blocks carry `{ type: "ephemeral" }` without TTL. This is NOT something Phase 4 implements — it is the existing behavior:
 
 - `injectSystemCacheTtl()` in `proxy.ts` (lines 550–587) runs at step 3b of proxy handling, **after** `transformRequestBody()`. It upgrades system blocks from `{ type: "ephemeral" }` to `{ type: "ephemeral", ttl: "1h" }`.
 - The test in `inject-system-cache-ttl.test.ts` (line 122) explicitly confirms it "only modifies system blocks, not messages with cache_control" — user message blocks are left as `{ type: "ephemeral" }` without TTL.
 - Phase 4's non-destructive guard ensures `injectSystemCacheTtl()` can still upgrade the system block after `transformRequestBody()` injects `{ type: "ephemeral" }` (TTL field absent = eligible for upgrade).
 
 **CACHE-04 passes automatically** once D-01 (non-destructive) and D-02 (no TTL in transform) are respected. The regression test suite should verify: inject on system block → `injectSystemCacheTtl()` then adds `ttl: "1h"` → user message block keeps `{ type: "ephemeral" }` (no TTL).
+
+**Scope clarification [RESOLVED]:** `injectSystemCacheTtl()` only modifies `body.system` blocks (confirmed by reading proxy.ts lines 564–582: `if (!Array.isArray(body.system)) return null`). Tools blocks are NOT upgraded — they keep `{ type: "ephemeral" }` (no TTL). Plan 02 includes a test confirming this distinction: a tool block after transform has `{ type: "ephemeral" }` and `injectSystemCacheTtl()` leaves tools unchanged.
 
 ---
 
@@ -439,14 +441,14 @@ No stored data needs migration. The `openrouter_provider_preference` column (TEX
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **`ensureSchemaPg()` CREATE TABLE completeness for new PG installs**
+1. **`ensureSchemaPg()` CREATE TABLE completeness for new PG installs** [RESOLVED]
    - What we know: `runMigrationsPg()` `columnsToAdd` is missing `openrouter_provider_preference`
    - What is unclear: Whether the `CREATE TABLE IF NOT EXISTS accounts` in `ensureSchemaPg()` also omits the column (not fully read)
    - Recommendation: Read `ensureSchemaPg()` fully and add the column to both the CREATE TABLE and `columnsToAdd` if missing. [LOW confidence — assumed missing; verify in implementation]
 
-2. **`body.provider` truthy check vs. presence check**
+2. **`body.provider` truthy check vs. presence check** [RESOLVED]
    - What we know: D-11 says "incoming request body does NOT already have a `provider` field"
    - What is unclear: Whether `!body.provider` or `"provider" in body` better expresses intent when `body.provider` could be `{}`
    - Recommendation: Use `"provider" in body` for precise field-presence semantics. This is the safer implementation aligned with the decision's intent.
