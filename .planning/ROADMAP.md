@@ -1,6 +1,6 @@
 # Roadmap: better-ccflare (Personal Fork)
 
-**Updated:** 2026-05-05 (v1.1 Phase 3 planned)
+**Updated:** 2026-05-20 (v1.1 Phase 4 planned)
 
 ## Milestones
 
@@ -54,7 +54,12 @@ Plans:
   2. Tools and system blocks carry `ttl: "1h"`; user message and last assistant turn blocks carry `{ type: "ephemeral" }` (5-min)
   3. When an account has `openrouter_provider_preference` set, the proxy injects `provider.order` with `allow_fallbacks: true`; when the incoming request already contains a `provider` field, it is left untouched
   4. Regression tests cover: 4th breakpoint injection, count guard (no inject when already at 4), TTL split, and correct behavior across model types without a model-prefix gate
-**Plans**: TBD
+**Plans**: 3 plans
+
+Plans:
+- [ ] 04-01-PLAN.md — Fix PG migration gap + update type chain to structured object shape (execute)
+- [ ] 04-02-PLAN.md — Write 9 failing tests for count guard, 4th breakpoint, provider injection (TDD RED gate)
+- [ ] 04-03-PLAN.md — Implement transformRequestBody() extension to pass all tests (TDD GREEN gate)
 
 ### Phase 5: API Layer
 **Goal**: Operators can set or clear an account's OpenRouter provider preference via the REST API
@@ -89,6 +94,6 @@ Phases execute in numeric order: 3 → 4 → 5 → 6
 | 1. Correctness & Patch Hardening | v1.0 | 3/3 | ✅ Complete | 2026-05-04 |
 | 2. Fork Maintenance Tooling | v1.0 | 1/1 | ✅ Complete | 2026-05-05 |
 | 3. Data Model | v1.1 | 0/2 | Not started | - |
-| 4. Cache Extension & Provider Injection | v1.1 | 0/TBD | Not started | - |
+| 4. Cache Extension & Provider Injection | v1.1 | 0/3 | Not started | - |
 | 5. API Layer | v1.1 | 0/TBD | Not started | - |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 0/TBD | Not started | - |
