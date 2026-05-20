@@ -79,7 +79,8 @@ describe("OpenRouter provider preference — PUT + DELETE handlers", () => {
 		DatabaseFactory.initialize(TEST_DB_PATH);
 		dbOps = DatabaseFactory.getInstance();
 		putHandler = createAccountOpenrouterProviderPreferenceHandler(dbOps);
-		deleteHandler = createAccountOpenrouterProviderPreferenceDeleteHandler(dbOps);
+		deleteHandler =
+			createAccountOpenrouterProviderPreferenceDeleteHandler(dbOps);
 	});
 
 	afterAll(() => {
@@ -111,10 +112,7 @@ describe("OpenRouter provider preference — PUT + DELETE handlers", () => {
 	// T-02: PUT with valid order → preference persisted correctly
 	it("T-02: PUT with valid order persists order to DB", async () => {
 		const id = await insertAccount(dbOps, "acc2");
-		await putHandler(
-			makePutRequest({ order: ["openai", "anthropic"] }),
-			id,
-		);
+		await putHandler(makePutRequest({ order: ["openai", "anthropic"] }), id);
 		const pref = await readPreference(dbOps, id);
 		expect(pref?.order).toEqual(["openai", "anthropic"]);
 	});
@@ -193,5 +191,15 @@ describe("OpenRouter provider preference — PUT + DELETE handlers", () => {
 	it("T-09: DELETE on non-existent account returns 404", async () => {
 		const response = await deleteHandler(makeDeleteRequest(), "nonexistent-id");
 		expect(response.status).toBe(404);
+	});
+
+	// T-12: DELETE on account with no prior preference → 204 (idempotent)
+	it("T-12: DELETE on account with no existing preference returns 204", async () => {
+		const id = await insertAccount(dbOps, "acc10");
+		// No PUT call — preference starts as NULL
+		const response = await deleteHandler(makeDeleteRequest(), id);
+		expect(response.status).toBe(204);
+		const pref = await readPreference(dbOps, id);
+		expect(pref).toBeNull();
 	});
 });
