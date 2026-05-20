@@ -104,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-20 — Phase 4 complete (cache extension + provider injection, TDD, PG migration gap closed)*
+*Last updated: 2026-05-20 — Phase 5 complete (DELETE /api/accounts/:id/openrouter-provider-preference endpoint, PROV-03 satisfied, 11-case TDD suite)*
