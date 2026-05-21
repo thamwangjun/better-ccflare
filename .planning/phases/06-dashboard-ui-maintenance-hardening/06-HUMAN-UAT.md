@@ -1,9 +1,9 @@
 ---
-status: complete
+status: partial
 phase: 06-dashboard-ui-maintenance-hardening
 source: [06-VERIFICATION.md]
 started: 2026-05-21T05:45:00Z
-updated: 2026-05-21T08:00:00Z
+updated: 2026-05-21T08:30:00Z
 ---
 
 ## Current Test
@@ -24,15 +24,17 @@ result: PASSED — nc output confirmed `"provider":{"order":["anthropic/claude-3
 expected: After clearing the preference via the dialog, confirm the upstream request body no longer contains a `provider` field
 result: PASSED — nc output confirmed no "provider" field in upstream body after clearing preference.
 
+### 4. Discard Changes discards unsaved edits (SC-4)
+expected: Open the dialog, type something new in the Provider Order field, click "Discard Changes", then reopen the dialog — the original saved value should be restored, not the unsaved edit
+result: [pending]
+
 ## Summary
 
-total: 3
+total: 4
 passed: 3
 issues: 0
-pending: 0
+pending: 1
 skipped: 0
 blocked: 0
 
 ## Gaps
-
-- **Discard Changes behavior not formally tested:** The Provider Preferences dialog has a "Discard Changes" / cancel path that was not covered by the UAT script. This is a future testing gap only — the feature functions correctly based on SC-1 through SC-3. No functional failure observed.
