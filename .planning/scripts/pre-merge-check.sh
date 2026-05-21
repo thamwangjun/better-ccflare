@@ -12,6 +12,8 @@ HIGH_RISK_FILES=(
   "packages/providers/src/providers/openai/provider.ts"
   "packages/providers/src/providers/openrouter/provider.ts"
   "packages/types/src/account.ts"
+  "packages/database/src/migrations.ts"
+  "packages/http-api/src/handlers/accounts.ts"
 )
 
 # IN-01: Personal fork branch name — change here if renamed
