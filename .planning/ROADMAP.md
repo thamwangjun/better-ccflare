@@ -93,11 +93,11 @@ Plans:
 
 Plans:
 **Wave 1** *(Plans 01 and 03 run in parallel)*
-- [ ] 06-01-PLAN.md — Write failing tests for dialog parse/branch/sync logic (TDD RED gate) [PROV-04]
-- [ ] 06-03-PLAN.md — Extend HIGH_RISK_FILES + full v1.1 FORK PATCH annotation audit [MAINT-04, MAINT-05]
+- [x] 06-01-PLAN.md — Write failing tests for dialog parse/branch/sync logic (TDD RED gate) [PROV-04]
+- [x] 06-03-PLAN.md — Extend HIGH_RISK_FILES + full v1.1 FORK PATCH annotation audit [MAINT-04, MAINT-05]
 
 **Wave 2** *(blocked on Plan 01 RED gate)*
-- [ ] 06-02-PLAN.md — Implement dialog component + API client methods + full prop threading (TDD GREEN gate) [PROV-04]
+- [x] 06-02-PLAN.md — Implement dialog component + API client methods + full prop threading (TDD GREEN gate) [PROV-04]
 
 ## Progress
 
