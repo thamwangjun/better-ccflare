@@ -617,6 +617,7 @@ export class APIRouter {
 				)(req, url);
 			}
 
+			// FORK PATCH: set OpenRouter provider preference
 			// Account OpenRouter provider preference update
 			if (
 				path.endsWith("/openrouter-provider-preference") &&
