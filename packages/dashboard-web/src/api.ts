@@ -1326,6 +1326,59 @@ class API extends HttpClient {
 		}
 	}
 
+	// FORK PATCH: OpenRouter provider preference API methods (PROV-04)
+	async putAccountOpenrouterProviderPreference(
+		accountId: string,
+		order: string[],
+		allowFallbacks: boolean,
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/openrouter-provider-preference`;
+
+		this.logger.debug(`→ PUT ${url}`, { order, allowFallbacks });
+
+		try {
+			await this.put(url, { order, allow_fallbacks: allowFallbacks });
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← PUT ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ PUT ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
+	async deleteAccountOpenrouterProviderPreference(
+		accountId: string,
+	): Promise<void> {
+		const startTime = Date.now();
+		const url = `/api/accounts/${accountId}/openrouter-provider-preference`;
+
+		this.logger.debug(`→ DELETE ${url}`);
+
+		try {
+			await this.delete(url);
+			const duration = Date.now() - startTime;
+			this.logger.debug(`← DELETE ${url} - 200 (${duration}ms)`);
+		} catch (error) {
+			const duration = Date.now() - startTime;
+			this.logger.error(`✗ DELETE ${url} - ERROR (${duration}ms)`, {
+				error: error instanceof Error ? error.message : String(error),
+				stack: error instanceof Error ? error.stack : undefined,
+			});
+			if (error instanceof HttpError) {
+				throw new Error(error.message);
+			}
+			throw error;
+		}
+	}
+
 	async updateAccountModelFallbacks(
 		accountId: string,
 		modelFallbacks: { [key: string]: string },
