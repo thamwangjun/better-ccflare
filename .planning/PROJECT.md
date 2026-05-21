@@ -104,4 +104,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-20 — Phase 5 complete (DELETE /api/accounts/:id/openrouter-provider-preference endpoint, PROV-03 satisfied, 11-case TDD suite)*
+*Last updated: 2026-05-21 — Phase 6 complete (Provider Preferences dialog, OpenRouter-only gate, proxy injection wired; PROV-04, MAINT-04, MAINT-05 satisfied; milestone v1.1 complete)*
