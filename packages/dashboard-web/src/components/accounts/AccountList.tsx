@@ -16,6 +16,7 @@ interface AccountListProps {
 	onPeakHoursPauseToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
+	// FORK PATCH: thread provider preference change handler (PROV-04)
 	onProviderPreferenceChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
 	onAnthropicReauth?: (account: Account) => void;
