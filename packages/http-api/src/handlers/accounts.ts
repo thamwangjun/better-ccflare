@@ -3674,7 +3674,9 @@ export function createAccountOpenrouterProviderPreferenceDeleteHandler(
 
 			await dbOps.setAccountOpenrouterProviderPreference(accountId, null);
 
-			log.info(`Cleared OpenRouter provider preference for account ${accountId}`);
+			log.info(
+				`Cleared OpenRouter provider preference for account ${accountId}`,
+			);
 
 			return new Response(null, { status: 204 });
 		} catch (error) {

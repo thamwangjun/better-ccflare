@@ -31,7 +31,7 @@ export function syncProviderPreferenceState(account: Account | null): {
 	providerOrder: string;
 	allowFallbacks: boolean;
 } {
-	if (!account || !account.openrouterProviderPreference) {
+	if (!account?.openrouterProviderPreference) {
 		return { providerOrder: "", allowFallbacks: true };
 	}
 	return {
