@@ -1,6 +1,6 @@
 # Roadmap: better-ccflare (Personal Fork)
 
-**Updated:** 2026-05-20 (v1.1 Phase 5 planned)
+**Updated:** 2026-05-21 (v1.1 Phase 6 planned)
 
 ## Milestones
 
@@ -89,8 +89,15 @@ Plans:
   3. Clearing the provider order field removes the preference and the proxy stops injecting `provider.order` for that account
   4. `pre-merge-check.sh` `HIGH_RISK_FILES` includes `migrations.ts` and `http-api/src/handlers/accounts.ts`
   5. Every v1.1 code block carrying fork-specific logic has a `// FORK PATCH:` comment (confirmed before merge)
-**Plans**: TBD
-**UI hint**: yes
+**Plans**: 3 plans
+
+Plans:
+**Wave 1** *(Plans 01 and 03 run in parallel)*
+- [ ] 06-01-PLAN.md — Write failing tests for dialog parse/branch/sync logic (TDD RED gate) [PROV-04]
+- [ ] 06-03-PLAN.md — Extend HIGH_RISK_FILES + full v1.1 FORK PATCH annotation audit [MAINT-04, MAINT-05]
+
+**Wave 2** *(blocked on Plan 01 RED gate)*
+- [ ] 06-02-PLAN.md — Implement dialog component + API client methods + full prop threading (TDD GREEN gate) [PROV-04]
 
 ## Progress
 
@@ -104,4 +111,4 @@ Phases execute in numeric order: 3 → 4 → 5 → 6
 | 3. Data Model | v1.1 | 0/2 | Not started | - |
 | 4. Cache Extension & Provider Injection | v1.1 | 0/3 | Not started | - |
 | 5. API Layer | v1.1 | 0/2 | Not started | - |
-| 6. Dashboard UI & Maintenance Hardening | v1.1 | 0/TBD | Not started | - |
+| 6. Dashboard UI & Maintenance Hardening | v1.1 | 0/3 | Not started | - |
