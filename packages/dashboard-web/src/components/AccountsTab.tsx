@@ -8,6 +8,7 @@ import {
 	AccountCustomEndpointDialog,
 	AccountList,
 	AccountModelMappingsDialog,
+	AccountOpenrouterProviderPreferenceDialog,
 	AccountPriorityDialog,
 	AnthropicReauthDialog,
 	CodexReauthDialog,
@@ -66,6 +67,14 @@ export function AccountsTab() {
 		account: null,
 	});
 	const [modelMappingsDialog, setModelMappingsDialog] = useState<{
+		isOpen: boolean;
+		account: Account | null;
+	}>({
+		isOpen: false,
+		account: null,
+	});
+	// FORK PATCH: Provider preferences dialog state (PROV-04)
+	const [providerPreferenceDialog, setProviderPreferenceDialog] = useState<{
 		isOpen: boolean;
 		account: Account | null;
 	}>({
@@ -497,6 +506,39 @@ export function AccountsTab() {
 		setModelMappingsDialog({ isOpen: true, account });
 	};
 
+	// FORK PATCH: (PROV-04)
+	const handleProviderPreferenceChange = (account: Account) => {
+		setProviderPreferenceDialog({ isOpen: true, account });
+	};
+
+	const handleSetProviderPreference = async (
+		accountId: string,
+		order: string[],
+		allowFallbacks: boolean,
+	) => {
+		try {
+			await api.putAccountOpenrouterProviderPreference(
+				accountId,
+				order,
+				allowFallbacks,
+			);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	const handleClearProviderPreference = async (accountId: string) => {
+		try {
+			await api.deleteAccountOpenrouterProviderPreference(accountId);
+			await loadAccounts();
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
 	const handleReauth = (account: Account) => {
 		setQwenReauthDialog({ isOpen: true, account });
 	};
@@ -632,6 +674,7 @@ export function AccountsTab() {
 						onPeakHoursPauseToggle={handlePeakHoursPauseToggle}
 						onCustomEndpointChange={handleCustomEndpointChange}
 						onModelMappingsChange={handleModelMappingsChange}
+						onProviderPreferenceChange={handleProviderPreferenceChange}
 						onReauth={handleReauth}
 						onAnthropicReauth={handleAnthropicReauth}
 						onCodexReauth={handleCodexReauth}
@@ -709,6 +752,21 @@ export function AccountsTab() {
 						})
 					}
 					onUpdateModelMappings={handleUpdateModelMappings}
+				/>
+			)}
+			{/* FORK PATCH: (PROV-04) */}
+			{providerPreferenceDialog.isOpen && providerPreferenceDialog.account && (
+				<AccountOpenrouterProviderPreferenceDialog
+					isOpen={providerPreferenceDialog.isOpen}
+					account={providerPreferenceDialog.account}
+					onOpenChange={(open) =>
+						setProviderPreferenceDialog({
+							isOpen: open,
+							account: open ? providerPreferenceDialog.account : null,
+						})
+					}
+					onSetProviderPreference={handleSetProviderPreference}
+					onClearProviderPreference={handleClearProviderPreference}
 				/>
 			)}
 			<QwenReauthDialog

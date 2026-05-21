@@ -9,6 +9,7 @@ import {
 	Pause,
 	Play,
 	RefreshCw,
+	Settings2,
 	Trash2,
 	Zap,
 } from "lucide-react";
@@ -54,6 +55,7 @@ interface AccountListItemProps {
 	onPeakHoursPauseToggle?: (account: Account) => void;
 	onCustomEndpointChange?: (account: Account) => void;
 	onModelMappingsChange?: (account: Account) => void;
+	onProviderPreferenceChange?: (account: Account) => void;
 	onReauth?: (account: Account) => void;
 	onAnthropicReauth?: (account: Account) => void;
 	onCodexReauth?: (account: Account) => void;
@@ -75,6 +77,7 @@ export function AccountListItem({
 	onPeakHoursPauseToggle,
 	onCustomEndpointChange,
 	onModelMappingsChange,
+	onProviderPreferenceChange,
 	onReauth,
 	onAnthropicReauth,
 	onCodexReauth,
@@ -201,9 +204,9 @@ export function AccountListItem({
 								<Zap className="mr-2 h-4 w-4" />
 								Change Priority
 							</DropdownMenuItem>
-							{(onCustomEndpointChange || onModelMappingsChange) && (
-								<DropdownMenuSeparator />
-							)}
+							{(onCustomEndpointChange ||
+								onModelMappingsChange ||
+								onProviderPreferenceChange) && <DropdownMenuSeparator />}
 							{onCustomEndpointChange && (
 								<DropdownMenuItem
 									onClick={() => onCustomEndpointChange(account)}
@@ -244,6 +247,28 @@ export function AccountListItem({
 									)}
 								</DropdownMenuItem>
 							)}
+							{/* FORK PATCH: Provider preferences dropdown item (PROV-04) */}
+							{account.provider === "openrouter" &&
+								onProviderPreferenceChange && (
+									<DropdownMenuItem
+										onClick={() => onProviderPreferenceChange(account)}
+										title={
+											account.openrouterProviderPreference
+												? `Provider order: ${account.openrouterProviderPreference.order.join(", ")}`
+												: "Configure OpenRouter provider preferences"
+										}
+									>
+										<Settings2
+											className={`mr-2 h-4 w-4 ${account.openrouterProviderPreference ? "text-primary" : ""}`}
+										/>
+										Provider Preferences
+										{account.openrouterProviderPreference && (
+											<span className="ml-auto text-xs text-muted-foreground">
+												set
+											</span>
+										)}
+									</DropdownMenuItem>
+								)}
 							{hasReauth && <DropdownMenuSeparator />}
 							{account.provider === "qwen" && onReauth && (
 								<DropdownMenuItem
