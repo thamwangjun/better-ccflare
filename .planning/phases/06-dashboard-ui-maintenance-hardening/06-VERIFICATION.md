@@ -1,7 +1,7 @@
 ---
 phase: 06-dashboard-ui-maintenance-hardening
 verified: 2026-05-21T10:00:00Z
-status: human_needed
+status: passed
 score: 5/5 must-haves verified
 overrides_applied: 0
 re_verification: false
@@ -21,7 +21,7 @@ human_verification:
 
 **Phase Goal:** Dashboard operators can configure per-account provider preferences through a UI dialog, and all v1.1 fork patches are covered by maintenance tooling
 **Verified:** 2026-05-21T10:00:00Z
-**Status:** human_needed
+**Status:** passed
 **Re-verification:** No — initial verification
 
 ## Goal Achievement
@@ -31,8 +31,8 @@ human_verification:
 | # | Truth (ROADMAP Success Criteria) | Status | Evidence |
 |---|----------------------------------|--------|----------|
 | SC-1 | Provider order dialog appears only on `provider === "openrouter"` accounts | VERIFIED | `AccountListItem.tsx` line 251: `{account.provider === "openrouter" && onProviderPreferenceChange && (...)}` — conditional gate confirmed |
-| SC-2 | Operator saves provider list → subsequent requests inject `provider.order` | UNCERTAIN (human needed) | UI → API → DB chain fully wired (see Key Links). Proxy injection code confirmed at `openrouter/provider.ts` lines 193–204. Cannot verify end-to-end without live instance; Anthropic account test forbidden by CLAUDE.md |
-| SC-3 | Clearing provider order field removes preference → proxy stops injecting `provider.order` | UNCERTAIN (human needed) | DELETE path wired end-to-end. `provider.ts` guard `if (account?.openrouter_provider_preference)` stops injection when null. Cannot verify without live proxy; see SC-2 constraint |
+| SC-2 | Operator saves provider list → subsequent requests inject `provider.order` | VERIFIED (human confirmed 2026-05-21) | nc echo server captured upstream body containing `"provider":{"order":["anthropic/claude-3-5-sonnet"],"allow_fallbacks":true}` |
+| SC-3 | Clearing provider order field removes preference → proxy stops injecting `provider.order` | VERIFIED (human confirmed 2026-05-21) | nc echo server captured upstream body with no `provider` field after clearing preference |
 | SC-4 | `pre-merge-check.sh HIGH_RISK_FILES` includes `migrations.ts` and `http-api/src/handlers/accounts.ts` | VERIFIED | Lines 15–16 of `.planning/scripts/pre-merge-check.sh`: both entries present. `bash -n` syntax check exits 0 |
 | SC-5 | Every v1.1 fork-specific code block carries `// FORK PATCH:` comment | VERIFIED | grep count = 34 annotations across packages/ (≥27 baseline). All required blocks confirmed: migrations.ts, migrations-pg.ts, database-operations.ts, account.repository.ts, handlers/accounts.ts ×4, router.ts, openrouter/provider.ts ×6, openai/provider.ts, auto-refresh-scheduler.ts ×3, types/account.ts ×6, api.ts ×1, dialog component ×1, AccountsTab.tsx ×2, AccountListItem.tsx (JSX `{/* FORK PATCH */}` comment) |
 
