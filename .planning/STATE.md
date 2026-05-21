@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-05-05)
 Phase: 06
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-05-21
+Last activity: 2026-05-21 - Completed quick task 260521-nd3: address all 5 items in tech debt
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -80,6 +80,12 @@ None yet.
 
 - v1.0 deferred: live non-Anthropic model request test (SC-2 / CACHE-02) — human verification still needed before v1.1 closes
 - Pre-existing 27 Biome lint errors in dashboard React components (unrelated to fork patches) — do not fix unless Phase 6 work touches those files
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260521-nd3 | address all 5 items in tech debt | 2026-05-21 | 6b96c598 | [260521-nd3-address-tech-debt-v11](./quick/260521-nd3-address-tech-debt-v11/) |
 
 ## Session Continuity
 
