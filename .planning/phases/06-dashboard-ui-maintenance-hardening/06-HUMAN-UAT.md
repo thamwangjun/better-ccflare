@@ -1,5 +1,5 @@
 ---
-status: partial
+status: complete
 phase: 06-dashboard-ui-maintenance-hardening
 source: [06-VERIFICATION.md]
 started: 2026-05-21T05:45:00Z
@@ -26,14 +26,14 @@ result: PASSED — nc output confirmed no "provider" field in upstream body afte
 
 ### 4. Discard Changes discards unsaved edits (SC-4)
 expected: Open the dialog, type something new in the Provider Order field, click "Discard Changes", then reopen the dialog — the original saved value should be restored, not the unsaved edit
-result: [pending]
+result: PASSED — original saved value restored on reopen after clicking Discard Changes.
 
 ## Summary
 
 total: 4
-passed: 3
+passed: 4
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
