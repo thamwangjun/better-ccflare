@@ -26,7 +26,7 @@ Full details: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 - [ ] **Phase 3: Data Model** - Extend account schema with OpenRouter provider preference field
 - [ ] **Phase 4: Cache Extension & Provider Injection** - Add 4th cache breakpoint, TTL split, and provider.order injection
 - [ ] **Phase 5: API Layer** - PATCH endpoint to set or clear per-account provider preference
-- [ ] **Phase 6: Dashboard UI & Maintenance Hardening** - Provider order dialog and fork patch surface update
+- [x] **Phase 6: Dashboard UI & Maintenance Hardening** - Provider order dialog and fork patch surface update (completed 2026-05-21)
 
 ## Phase Details
 
@@ -111,4 +111,4 @@ Phases execute in numeric order: 3 → 4 → 5 → 6
 | 3. Data Model | v1.1 | 0/2 | Not started | - |
 | 4. Cache Extension & Provider Injection | v1.1 | 0/3 | Not started | - |
 | 5. API Layer | v1.1 | 0/2 | Not started | - |
-| 6. Dashboard UI & Maintenance Hardening | v1.1 | 0/3 | Not started | - |
+| 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | Complete   | 2026-05-21 |

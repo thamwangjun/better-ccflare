@@ -17,12 +17,12 @@
 - [ ] **PROV-01**: Proxy injects `body.provider = { order: [...], allow_fallbacks: true }` from account's stored preference when no `provider` field is already present in the incoming request (client-supplied wins)
 - [ ] **PROV-02**: Account schema extended with `openrouter_provider_preference TEXT DEFAULT NULL` column; account type, repository SELECT/UPDATE queries, and `database-operations.ts` facade updated; all changes annotated with `// FORK PATCH:`
 - [ ] **PROV-03**: REST API supports PATCH to set or clear `openrouter_provider_preference` per account (mirrors existing `model_mappings` handler pattern)
-- [ ] **PROV-04**: Dashboard UI includes a dialog on OpenRouter accounts to set or clear provider order (comma-separated input serialized to JSON array), gated on `account.provider === "openrouter"`
+- [x] **PROV-04**: Dashboard UI includes a dialog on OpenRouter accounts to set or clear provider order (comma-separated input serialized to JSON array), gated on `account.provider === "openrouter"`
 
 ### MAINT — Fork Patch Surface
 
-- [ ] **MAINT-04**: `pre-merge-check.sh` `HIGH_RISK_FILES` list updated to include all files receiving fork patches in v1.1 (`migrations.ts`, `config/src/index.ts`, `http-api/src/handlers/accounts.ts`)
-- [ ] **MAINT-05**: Every fork-specific code block added in v1.1 carries a `// FORK PATCH:` comment before merging (enforced by pre-commit review)
+- [x] **MAINT-04**: `pre-merge-check.sh` `HIGH_RISK_FILES` list updated to include all files receiving fork patches in v1.1 (`migrations.ts`, `config/src/index.ts`, `http-api/src/handlers/accounts.ts`)
+- [x] **MAINT-05**: Every fork-specific code block added in v1.1 carries a `// FORK PATCH:` comment before merging (enforced by pre-commit review)
 
 ---
 
@@ -57,6 +57,6 @@
 | PROV-01 | Phase 4 | Pending |
 | PROV-02 | Phase 3 | Pending |
 | PROV-03 | Phase 5 | Pending |
-| PROV-04 | Phase 6 | Pending |
-| MAINT-04 | Phase 6 | Pending |
-| MAINT-05 | Phase 6 | Pending |
+| PROV-04 | Phase 6 | Complete |
+| MAINT-04 | Phase 6 | Complete |
+| MAINT-05 | Phase 6 | Complete |
