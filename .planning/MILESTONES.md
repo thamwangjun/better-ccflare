@@ -1,5 +1,32 @@
 # Milestones — better-ccflare (Personal Fork)
 
+## v1.1 — Extended caching for openrouter models
+
+**Shipped:** 2026-05-21
+**Phases:** 4 (Phase 3: Data Model, Phase 4: Cache Extension & Provider Injection, Phase 5: API Layer, Phase 6: Dashboard UI & Maintenance Hardening)
+**Plans:** 11 | **Commits:** ~268 | **Timeline:** 16 days (2026-05-05 → 2026-05-21)
+
+### Delivered
+
+Extended OpenRouter cache injection to the full 4-breakpoint limit with a count guard and non-destructive retrofit, added per-account provider preference (stored JSON, injected as `provider.order` on proxy requests), exposed PUT/DELETE REST endpoints for preference management, and delivered a dashboard dialog gated on `account.provider === "openrouter"`. All 9 requirements satisfied; 27 FORK PATCH annotations confirmed; human UAT signed off on SC-1 (dialog gate), SC-2 (proxy injection), and SC-3 (clear injection).
+
+### Key Accomplishments
+
+1. Extended cache injection to 4 breakpoints with `countExistingCacheControlBlocks()` count guard — proxy never injects a 5th block (CACHE-03/05)
+2. Provider preference injection: `body.provider = { order: [...], allow_fallbacks: true }` injected when account has preference set and client hasn't supplied `provider` field (PROV-01)
+3. Full data model: `openrouter_provider_preference TEXT DEFAULT NULL` column with SQLite + PG migrations, type chain, repository, and facade (PROV-02)
+4. PUT/DELETE REST endpoints for per-account provider preference management — 11 TDD tests GREEN (PROV-03)
+5. Provider Preferences dashboard dialog — OpenRouter-only gate, save/clear wired end-to-end, human UAT SC-1/SC-2/SC-3 signed off (PROV-04)
+6. pre-merge-check.sh HIGH_RISK_FILES extended to 5 entries; 27 FORK PATCH annotations confirmed across 10 v1.1-modified files (MAINT-04/05)
+
+### Archive
+
+- Roadmap: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
+- Requirements: [milestones/v1.1-REQUIREMENTS.md](milestones/v1.1-REQUIREMENTS.md)
+- Audit: [milestones/v1.1-MILESTONE-AUDIT.md](milestones/v1.1-MILESTONE-AUDIT.md)
+
+---
+
 ## v1.0 — Correctness & Maintenance
 
 **Shipped:** 2026-05-05

@@ -51,10 +51,64 @@
 
 ---
 
+## Milestone: v1.1 — Extended caching for openrouter models
+
+**Shipped:** 2026-05-21
+**Phases:** 4 | **Plans:** 11 | **Commits:** ~268 | **Timeline:** 16 days (2026-05-05 → 2026-05-21)
+
+### What Was Built
+
+- Extended cache injection to 4 breakpoints with `countExistingCacheControlBlocks()` count guard — non-destructive retrofit on existing 3 breakpoints
+- Provider preference injection: `body.provider = { order, allow_fallbacks }` from stored account preference when client hasn't supplied `provider` field
+- `openrouter_provider_preference TEXT DEFAULT NULL` column with SQLite + PG migrations, full type chain, repository, and facade
+- PUT/DELETE REST endpoints for per-account provider preference management — 11 TDD tests GREEN
+- Dashboard Provider Preferences dialog gated on `account.provider === "openrouter"` — human UAT SC-1/SC-2/SC-3 signed off
+- pre-merge-check.sh HIGH_RISK_FILES extended to 5 entries; 27 FORK PATCH annotations confirmed
+
+### What Worked
+
+- **Wave-based parallelism (Phase 6):** Plans 06-01 and 06-03 ran in parallel (RED gate + audit), then 06-02 ran in Wave 2. This shaved meaningful time off the phase without adding coordination overhead.
+- **Structured JSON storage over bare array:** Choosing `{ order, allow_fallbacks }` JSON shape up front (Plan 04-01) avoided a schema change when `allow_fallbacks` was needed — decision paid off in Plan 04-03 and 06-02.
+- **Human UAT as a final gate (Plan 04):** The sc-2/sc-3 nc-based proxy capture tests gave real confidence in the E2E injection path before milestone close — static test suites can't replace this.
+- **Type shape change caught early (Plan 04-01):** Upgrading `AccountResponse.openrouterProviderPreference` from `string[] | null` to `{ order, allowFallbacks } | null` in Plan 04-01 (before any tests) prevented the type mismatch from surfacing as a RED test failure in Plan 04-02.
+
+### What Was Inefficient
+
+- **PG migration gap required a separate plan:** Phase 3 shipped without porting the SQLite migration to PostgreSQL (CLAUDE.md requirement). Plan 04-01 was needed to close this before tests could be written. A tighter pre-execution checklist would catch this before Phase 3 execution starts.
+- **STATE.md stale at start:** `percent: 125` and `completed_phases: 5` carried over from v1.1 execution — STATE.md wasn't reset after v1.0 milestone close. This is a pattern from v1.0 as well.
+- **inline-worker worktree issue repeated:** Both Phase 5 plans hit the same missing auto-generated file issue in the worktree. Once identified in Plan 05-01, the fix is known for future worktree-based execution.
+
+### Patterns Established
+
+- `countExistingCacheControlBlocks()` as a pre-mutation count helper — the right pattern for any injection logic that must respect an upper bound
+- `"provider" in body` field-presence check (not `!body.provider`) when guarding injection against an existing field — explicit check beats truthiness
+- `?? true` nullish coalescing for boolean flags that must preserve explicit `false` — used in `allow_fallbacks`
+- Human UAT via `nc` echo server for verifying proxy request body injection — reusable pattern for future proxy-level changes
+- Wave parallelism in Phase 6 (RED gate + unrelated audit in Wave 1, implementation in Wave 2) — works cleanly when Wave 1 tasks are fully independent
+
+### Key Lessons
+
+1. **Port migrations to PG at the same time as SQLite.** The CLAUDE.md requirement exists for a reason — doing it in a separate plan adds unnecessary planning overhead. Add a PG port task to Phase 3 scope upfront.
+2. **Reset STATE.md at milestone close, not at next milestone start.** The stale percent/phase counts carry into the new milestone and create confusion. The `/gsd-complete-milestone` workflow should reset STATE.md as part of close, not rely on the next execution run to fix it.
+3. **Document known worktree gotchas in CLAUDE.md or phase templates.** The inline-worker copy issue will happen again on any worktree-based plan. A one-line note in the worktree setup section would prevent the detour.
+4. **TDD pays compound interest across phases.** The RED gates in each phase (03-01, 04-02, 05-01, 06-01) meant that each implementation plan had an unambiguous definition of done. Zero ambiguity about what "complete" meant at the GREEN gate.
+
+### Cost Observations
+
+- Model mix: Sonnet 4.6 (primary — all planning and execution)
+- Sessions: ~10 (2 per phase × 4 phases + planning + audit + quick task)
+- Notable: Phase 06 Plan 03 (annotation audit) was essentially a read-only pass — minimal cost for full MAINT-05 compliance
+
+---
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Days | Requirements |
 |-----------|--------|-------|------|--------------|
 | v1.0 | 2 | 4 | 2 | 7/7 |
+| v1.1 | 4 | 11 | 16 | 9/9 |
 
-*More milestones needed for trend analysis.*
+**Trends:**
+- Plans per phase growing (v1.0: 2.0 avg → v1.1: 2.75 avg) — TDD RED+GREEN split accounts for most of this; expected for feature work vs correctness fixes
+- Days per plan stable (~0.5 days v1.0, ~1.5 days v1.1) — v1.1 plans were larger scope with more cross-cutting type changes
+- Requirements satisfaction: 100% both milestones — audit gate is working

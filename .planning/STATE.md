@@ -1,36 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: Extended caching for openrouter models
-status: milestone_complete
-stopped_at: Completed 06-04-PLAN.md — Phase 6 fully closed
-last_updated: "2026-05-21T07:45:42.348Z"
+milestone: v1.2
+milestone_name: TBD — run /gsd-new-milestone
+status: planning
+stopped_at: v1.1 milestone archived 2026-05-21 — ready to plan v1.2
+last_updated: "2026-05-21T00:00:00Z"
 last_activity: 2026-05-21
 progress:
-  total_phases: 4
-  completed_phases: 5
-  total_plans: 11
-  completed_plans: 11
-  percent: 125
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-05-05)
+See: `.planning/PROJECT.md` (updated 2026-05-21 after v1.1 milestone)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Phase 06 — dashboard-ui-maintenance-hardening
+**Current focus:** v1.2 planning — run `/gsd-new-milestone` to start
 
 ## Current Position
 
-Phase: 06
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-05-21 - Completed quick task 260521-nd3: address all 5 items in tech debt
+Phase: —
+Plan: —
+Status: v1.1 archived — planning v1.2
+Last activity: 2026-05-21 — v1.1 milestone closed and archived
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [──────────] v1.1 complete ✅ | v1.2 not started
 
 ## Performance Metrics
 
