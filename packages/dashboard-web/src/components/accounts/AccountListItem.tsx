@@ -195,7 +195,7 @@ export function AccountListItem({
 								<MoreHorizontal className="h-4 w-4" />
 							</Button>
 						</DropdownMenuTrigger>
-						<DropdownMenuContent align="end">
+						<DropdownMenuContent align="end" className="min-w-52">
 							<DropdownMenuItem onClick={() => onRename(account)}>
 								<Edit2 className="mr-2 h-4 w-4" />
 								Rename
