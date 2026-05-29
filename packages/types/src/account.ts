@@ -130,6 +130,7 @@ export interface AccountRow {
 	refresh_token_issued_at?: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
 	// FORK PATCH: JSON string for OpenRouter provider.order preference
 	openrouter_provider_preference?: string | null;
+	consecutive_rate_limits?: number | null;
 }
 
 // Domain model - used throughout the application
@@ -168,6 +169,7 @@ export interface Account {
 	refresh_token_issued_at: number | null; // Timestamp when the current refresh token was issued (updated on each token refresh)
 	// FORK PATCH: JSON string for OpenRouter provider.order preference
 	openrouter_provider_preference: string | null;
+	consecutive_rate_limits: number;
 }
 
 // Session statistics for 5-hour token window
@@ -356,6 +358,7 @@ export function toAccount(row: AccountRow): Account {
 		refresh_token_issued_at: toNumOrNull(row.refresh_token_issued_at),
 		// FORK PATCH: JSON string for OpenRouter provider.order preference
 		openrouter_provider_preference: row.openrouter_provider_preference || null,
+		consecutive_rate_limits: toNum(row.consecutive_rate_limits),
 	};
 }
 
