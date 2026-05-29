@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-05-21 after v1.1 milestone)
 Phase: —
 Plan: —
 Status: v1.1 archived — planning v1.2
-Last activity: 2026-05-21 — v1.1 milestone closed and archived
+Last activity: 2026-05-29 - Completed quick task 260529-001: merge origin/main into thamw-main
 
 Progress: [──────────] v1.1 complete ✅ | v1.2 not started
 
@@ -86,6 +86,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260521-nd3 | address all 5 items in tech debt | 2026-05-21 | 6b96c598 | [260521-nd3-address-tech-debt-v11](./quick/260521-nd3-address-tech-debt-v11/) |
+| 260529-001 | merge origin/main into thamw-main | 2026-05-29 | 1ef0bec5 | [260529-001-merge-main-into-thamw-main](./quick/260529-001-merge-main-into-thamw-main/) |
 
 ## Session Continuity
 
