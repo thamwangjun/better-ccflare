@@ -138,5 +138,33 @@ describe("Worker SSE parsing", () => {
 			extractUsageFromData(data2, "message_delta", state2);
 			expect(state2.usage.outputTokens).toBe(200);
 		});
+
+		// COST-02: OpenRouter provider-returned cost extraction (per D-03)
+		it("extracts providerCostUsd from message_delta when cost is present", () => {
+			const state = { usage: { providerCostUsd: undefined } };
+			const data = JSON.stringify({
+				usage: { output_tokens: 50, cost: 0.0012 },
+			});
+			extractUsageFromData(data, "message_delta", state);
+			expect(state.usage.providerCostUsd).toBe(0.0012);
+		});
+
+		it("leaves providerCostUsd undefined when cost is absent", () => {
+			const state = { usage: { providerCostUsd: undefined } };
+			const data = JSON.stringify({
+				usage: { output_tokens: 50 },
+			});
+			extractUsageFromData(data, "message_delta", state);
+			expect(state.usage.providerCostUsd).toBeUndefined();
+		});
+
+		it("leaves providerCostUsd undefined when cost is null", () => {
+			const state = { usage: { providerCostUsd: undefined } };
+			const data = JSON.stringify({
+				usage: { output_tokens: 50, cost: null },
+			});
+			extractUsageFromData(data, "message_delta", state);
+			expect(state.usage.providerCostUsd).toBeUndefined();
+		});
 	});
 });
