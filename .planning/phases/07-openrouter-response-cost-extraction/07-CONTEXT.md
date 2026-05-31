@@ -8,7 +8,7 @@
 
 This phase extracts actual USD cost from OpenRouter API responses (`usage.cost` field) and surfaces it as `costUsd` through three code paths: (1) provider-level `extractUsageInfo()` for non-streaming JSON, (2) worker-level SSE streaming final chunk parsing, and (3) worker-level non-streaming body JSON extraction. The extracted cost is threaded through the existing usage pipeline so Phase 8 can skip `estimateCostUSD()` when real cost is available.
 
-**Phase 7 does NOT:** skip `estimateCostUSD()` (that's Phase 8), modify the DB schema, or change the dashboard display.
+**Phase 7 does NOT:** modify the DB schema or change the dashboard display.
 </domain>
 
 <decisions>
@@ -20,7 +20,7 @@ This phase extracts actual USD cost from OpenRouter API responses (`usage.cost` 
 
 ### Worker SSE streaming cost extraction (COST-02)
 - **D-03:** Parse `usage.cost` from the `message_delta` SSE event in `extractUsageFromData()` (alongside existing token parsing at `packages/proxy/src/post-processor.worker.ts:355`). Stash it in a new `providerCostUsd` field on the `RequestState.usage` object.
-- **D-04:** In `handleEnd()`, when `providerCostUsd` is set, skip `estimateCostUSD()` and use the provider-returned value directly. (The actual gating logic — conditionally skipping the estimate — is Phase 8's scope, but the field plumbing must be in place.)
+- **D-04:** In `handleEnd()`, when `providerCostUsd` is set, skip `estimateCostUSD()` and use the provider-returned value directly. The conditional skip logic is implemented in Phase 7.
 
 ### Worker non-streaming body cost extraction (COST-03)
 - **D-05:** Extend the existing `extractUsageFromJson()` function (line 287) to also read `usage.cost` from the parsed JSON body. Store it in the same `providerCostUsd` field on `RequestState.usage`.

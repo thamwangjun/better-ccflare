@@ -320,19 +320,19 @@ interface RequestState {
 | A3 | `usage.cost` is a `number` (double) in USD | All paths | LOW -- Confirmed by OpenAPI spec: `format: double, type: number`. The example value `0.0012` is consistent with USD. |
 | A4 | Non-OpenRouter providers never return `usage.cost` in SSE events | COST-02 / Non-OR providers | LOW -- The `cost` field is OpenRouter-specific. Standard Anthropic/Bedrock/Qwen responses do not include this field. The `typeof` guard pattern safely handles absence. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Does OpenRouter always include `cost` in Anthropic-format `message_delta` SSE events?**
+1. **Does OpenRouter always include `cost` in Anthropic-format `message_delta` SSE events?** RESOLVED: Use `typeof` guard so missing cost degrades gracefully. If testing shows cost is absent, the extraction still works -- it just won't set `providerCostUsd`. Plan 07-02 implements this pattern.
    - What we know: The `ChatUsage` schema (OpenAI-format) documents `cost`. The `MessagesDeltaEvent` schema (Anthropic-format) does not show `cost` in usage properties but OpenRouter is known to enrich Anthropic-format responses.
    - What's unclear: Whether `cost` is included in every `message_delta` or only the final one. The current code reads the last `message_delta` values (they overwrite previous values), so even if it appears only in the final event, the value is captured.
    - Recommendation: Use `typeof` guard so missing cost degrades gracefully. If testing shows cost is absent, the extraction still works -- it just won't set `providerCostUsd`.
 
-2. **Should the OpenRouter provider path (`extractUsageInfo`) set cost only when `cost` is a number?**
+2. **Should the OpenRouter provider path (`extractUsageInfo`) set cost only when `cost` is a number?** RESOLVED: Only set `costUsd` when `typeof json.usage.cost === "number"`. If undefined, the downstream flow preserves the existing estimate. Plan 07-01 implements this pattern.
    - What we know: The OpenAI provider's `extractUsageInfo` always sets `costUsd` (computed via `calculateCost()`). The base Anthropic compatible provider also computes cost.
    - What's unclear: Whether setting `costUsd` to `undefined` (when cost is null/absent) would overwrite a computed estimate or whether the flow preserves the estimate.
    - Recommendation: Only set `costUsd` when `typeof json.usage.cost === "number"`. If undefined, the downstream behavior depends on Phase 8 integration.
 
-3. **Do we need a new test file for `extractUsageFromJson` and `extractUsageFromData` worker functions?**
+3. **Do we need a new test file for `extractUsageFromJson` and `extractUsageFromData` worker functions?** RESOLVED: Yes — add COST-02 test cases to existing `sse-parsing.test.ts` and create a new `extract-usage-from-json.test.ts` for COST-03. Plan 07-02 includes both test files.
    - What we know: SSE parsing tests exist at `packages/proxy/src/__tests__/sse-parsing.test.ts` but only cover `parseSSELine` and a simplified `extractUsageFromData`. No test exists for `extractUsageFromJson`.
    - What's unclear: Whether the planner considers new test coverage mandatory for the worker functions.
    - Recommendation: Add COST-02/03 test cases. For COST-02, extend the existing SSE parsing test. For COST-03, add a new test file or extend an existing worker test.

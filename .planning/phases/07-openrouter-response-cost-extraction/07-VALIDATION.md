@@ -38,10 +38,9 @@ created: 2026-05-31
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 7-01-01 | 01 | 1 | COST-01 | T-7-01 | typeof guard on `usage.cost` before assignment | unit | `bun test packages/providers/src/providers/openrouter/__tests__/provider.test.ts` | ❌ W0 | ⬜ pending |
-| 7-01-02 | 01 | 1 | COST-02 | T-7-02 | typeof guard on `parsed.usage.cost` in SSE path | unit | `bun test packages/proxy/src/__tests__/sse-parsing.test.ts` | ❌ W0 | ⬜ pending |
-| 7-01-03 | 01 | 1 | COST-03 | T-7-03 | typeof guard on `usageObj.cost` in JSON path | unit | New test file for extractUsageFromJson | ❌ W0 | ⬜ pending |
-| 7-01-04 | 01 | 1 | COST-04 | — | Non-OpenRouter providers unaffected | integration | Manual test with non-OR account | ❌ W0 | ⬜ pending |
+| 7-01-01 | 01 | 1 | COST-01 | T-7-01 | typeof guard on `json.usage.cost` before assignment | unit | `bun test packages/providers/src/providers/openrouter/__tests__/provider.test.ts` | ❌ W0 | ⬜ pending |
+| 7-02-01 | 02 | 1 | COST-02, COST-03 | T-7-02, T-7-03 | typeof guard on `parsed.usage.cost` in SSE + JSON body paths | unit | `bun test packages/proxy/src/__tests__/sse-parsing.test.ts packages/proxy/src/__tests__/extract-usage-from-json.test.ts` | ❌ W0 | ⬜ pending |
+| 7-02-02 | 02 | 1 | COST-02, COST-03 | T-7-04 | handleEnd() skips estimateCostUSD when providerCostUsd is set | unit | `bun test packages/proxy/src/__tests__/sse-parsing.test.ts packages/proxy/src/__tests__/extract-usage-from-json.test.ts` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
