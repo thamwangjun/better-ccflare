@@ -63,7 +63,6 @@ interface RequestState {
 const log = new Logger("PostProcessor");
 const requests = new Map<string, RequestState>();
 
-console.log("[WORKER] Post-processor worker started");
 log.info("Post-processor worker started");
 
 // Limits to prevent unbounded growth
@@ -345,6 +344,11 @@ function extractUsageFromData(
 				state.usage.cacheCreationInputTokens =
 					usage.cache_creation_input_tokens || 0;
 				state.usage.outputTokens = usage.output_tokens || 0;
+				// WR-01: mirror the message_delta cost guard so a usage.cost delivered on
+				// message_start (provider variation) is not silently dropped.
+				if (typeof usage.cost === "number") {
+					state.usage.providerCostUsd = usage.cost;
+				}
 			}
 			if (parsed.message?.model) {
 				state.usage.model = parsed.message.model;
@@ -625,6 +629,12 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	const { startMessage } = state;
 	const responseTime = Date.now() - startMessage.timestamp;
 
+	// IN-03: compute the worker-debug gate once instead of repeating it ~5 times.
+	const debugWorker =
+		process.env.DEBUG?.includes("worker") ||
+		process.env.DEBUG === "true" ||
+		process.env.NODE_ENV === "development";
+
 	// Skip all database operations for ignored requests
 	if (state.shouldSkipLogging) {
 		// Clean up state without logging
@@ -702,11 +712,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 				if (isZaiModel) {
 					// For zai models, use total response time (more intuitive for users)
 					state.usage.tokensPerSecond = finalOutputTokens / totalDurationSec;
-					if (
-						process.env.DEBUG?.includes("worker") ||
-						process.env.DEBUG === "true" ||
-						process.env.NODE_ENV === "development"
-					) {
+					if (debugWorker) {
 						log.debug(
 							`ZAI token/s calculation: ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (using total response time: ${responseTime}ms)`,
 						);
@@ -722,11 +728,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 							// Use streaming duration for generation speed
 							state.usage.tokensPerSecond =
 								finalOutputTokens / streamingDurationSec;
-							if (
-								process.env.DEBUG?.includes("worker") ||
-								process.env.DEBUG === "true" ||
-								process.env.NODE_ENV === "development"
-							) {
+							if (debugWorker) {
 								log.info(
 									`Token/s calculation (streaming): ${finalOutputTokens} tokens / ${streamingDurationSec}s = ${state.usage.tokensPerSecond} tok/s (streaming duration: ${streamingDurationMs}ms)`,
 								);
@@ -735,11 +737,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 							// Fallback to total response time
 							state.usage.tokensPerSecond =
 								finalOutputTokens / totalDurationSec;
-							if (
-								process.env.DEBUG?.includes("worker") ||
-								process.env.DEBUG === "true" ||
-								process.env.NODE_ENV === "development"
-							) {
+							if (debugWorker) {
 								log.info(
 									`Token/s calculation (fallback): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
 								);
@@ -748,11 +746,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 					} else {
 						// No streaming timestamps available, use total response time
 						state.usage.tokensPerSecond = finalOutputTokens / totalDurationSec;
-						if (
-							process.env.DEBUG?.includes("worker") ||
-							process.env.DEBUG === "true" ||
-							process.env.NODE_ENV === "development"
-						) {
+						if (debugWorker) {
 							log.info(
 								`Token/s calculation (no timestamps): ${finalOutputTokens} tokens / ${totalDurationSec}s = ${state.usage.tokensPerSecond} tok/s (total response time: ${responseTime}ms)`,
 							);
@@ -762,11 +756,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			} else {
 				// If response time is 0, use a very small duration
 				state.usage.tokensPerSecond = finalOutputTokens / 0.001;
-				if (
-					process.env.DEBUG?.includes("worker") ||
-					process.env.DEBUG === "true" ||
-					process.env.NODE_ENV === "development"
-				) {
+				if (debugWorker) {
 					log.info(
 						`Token/s calculation (instant): ${finalOutputTokens} tokens / 0.001s = ${state.usage.tokensPerSecond} tok/s`,
 					);
@@ -776,11 +766,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 	}
 
 	// Update request with final data
-	if (
-		process.env.DEBUG?.includes("worker") ||
-		process.env.DEBUG === "true" ||
-		process.env.NODE_ENV === "development"
-	) {
+	if (debugWorker) {
 		log.debug(`Saving final request data for ${startMessage.requestId}`);
 	}
 	const projectAtEnd = state.project ?? null;
@@ -922,11 +908,7 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 	// Log if we have usage
 	if (state.usage.model && startMessage.accountId !== NO_ACCOUNT_ID) {
-		if (
-			process.env.DEBUG?.includes("worker") ||
-			process.env.DEBUG === "true" ||
-			process.env.NODE_ENV === "development"
-		) {
+		if (debugWorker) {
 			log.debug(
 				`Usage for request ${startMessage.requestId}: Model: ${state.usage.model}, ` +
 					`Tokens: ${state.usage.totalTokens || 0}, Cost: ${formatCost(state.usage.costUsd)}`,
