@@ -45,6 +45,7 @@ interface RequestState {
 		outputTokensComputed?: number;
 		totalTokens?: number;
 		costUsd?: number;
+		providerCostUsd?: number; // per D-06: provider-returned cost from OpenRouter (distinct from costUsd estimate)
 		tokensPerSecond?: number;
 	};
 	lastActivity: number;
@@ -292,6 +293,7 @@ function extractUsageFromJson(
 			cache_read_input_tokens?: number;
 			cache_creation_input_tokens?: number;
 			output_tokens?: number;
+			cost?: number; // per D-05: OpenRouter provider-returned cost
 		};
 	},
 	state: RequestState,
@@ -308,6 +310,11 @@ function extractUsageFromJson(
 	state.usage.cacheCreationInputTokens =
 		usageObj.cache_creation_input_tokens ?? 0;
 	state.usage.outputTokens = usageObj.output_tokens ?? 0;
+
+	// per D-05 (COST-03): extract OpenRouter provider-returned cost with typeof guard
+	if (typeof usageObj.cost === "number") {
+		state.usage.providerCostUsd = usageObj.cost;
+	}
 
 	// Calculate total tokens
 	const prompt =
@@ -367,6 +374,10 @@ function extractUsageFromData(
 				if (parsed.usage.cache_read_input_tokens !== undefined) {
 					state.usage.cacheReadInputTokens =
 						parsed.usage.cache_read_input_tokens;
+				}
+				// per D-03 (COST-02): extract OpenRouter provider-returned cost with typeof guard
+				if (typeof parsed.usage.cost === "number") {
+					state.usage.providerCostUsd = parsed.usage.cost;
 				}
 				return; // No further processing needed
 			}

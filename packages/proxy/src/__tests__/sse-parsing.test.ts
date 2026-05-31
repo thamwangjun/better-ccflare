@@ -82,6 +82,10 @@ describe("Worker SSE parsing", () => {
 			if (isMessageDelta) {
 				if (parsed.usage) {
 					state.usage.outputTokens = parsed.usage.output_tokens || 0;
+					// per D-03: extract OpenRouter provider-returned cost with typeof guard
+					if (typeof parsed.usage.cost === "number") {
+						state.usage.providerCostUsd = parsed.usage.cost;
+					}
 				}
 			}
 		}
