@@ -271,7 +271,7 @@ state.usage.costUsd = est === 0 ? undefined : est;  // unknown-model estimate mu
 | A2 | Only OpenRouter currently returns a real `usage.cost`; all other providers leave `providerCostUsd`/override-cost undefined and continue to estimate | Strategy B scoping | If another provider also returns `usage.cost`, scoping the fix to OpenRouter would miss it. Risk low — confirmed by CONTEXT.md regression-guard note and Phase 7 design. |
 | A3 | A known/catalogued model that genuinely estimates to exactly `$0` does not occur in practice (so mapping estimate `0 → undefined` loses no real data) | Strategy B / Finding 1 | If a catalogued model legitimately costs `$0` via estimate, that `$0` would become `null`. Acceptable per D-04 intent (free models report real `$0` via provider cost, not estimate); flag for planner confirmation. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does the live-path base estimate branch also need the `0 → undefined` map, or only the worker?**
    - What we know: For OpenRouter accounts the live streaming path will return real cost via the new override; the base estimate branch only runs for non-OpenRouter providers on the live path. The worker's estimate branch runs for any provider lacking `providerCostUsd`.
