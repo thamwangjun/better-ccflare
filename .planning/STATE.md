@@ -1,11 +1,10 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.2
-milestone_name: TBD — run /gsd-new-milestone
+milestone_name: OpenRouter Cost Tracking
 status: planning
-stopped_at: v1.1 milestone archived 2026-05-21 — ready to plan v1.2
-last_updated: "2026-05-21T00:00:00Z"
-last_activity: 2026-05-21
+last_updated: "2026-05-31T09:31:57.833Z"
+last_activity: 2026-05-31
 progress:
   total_phases: 0
   completed_phases: 0
@@ -25,12 +24,10 @@ See: `.planning/PROJECT.md` (updated 2026-05-21 after v1.1 milestone)
 
 ## Current Position
 
-Phase: —
+Phase: Not started (defining requirements)
 Plan: —
-Status: v1.1 archived — planning v1.2
-Last activity: 2026-05-31 - Completed quick task 260531-cel: add multi-stage Dockerfile that builds from local source
-
-Progress: [──────────] v1.1 complete ✅ | v1.2 not started
+Status: Defining requirements
+Last activity: 2026-05-31 — Milestone v1.2 started
 
 ## Performance Metrics
 

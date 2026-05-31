@@ -8,11 +8,15 @@ A maintained personal fork of [better-ccflare](https://github.com/tombii/better-
 
 Stay current with upstream while running a stable personal instance enhanced with features I need — primarily around OpenRouter caching, provider selection, and a clean patch workflow.
 
-## Current State: v1.1 Shipped (2026-05-21)
+## Current Milestone: v1.2 OpenRouter Cost Tracking
 
-**Shipped:** v1.1 — Extended caching for openrouter models. 4 phases, 11 plans, ~268 commits in 16 days.
+**Goal:** Capture actual usage cost from OpenRouter API responses instead of relying on client-side estimates that return $0 for unknown models.
 
-**Next milestone:** Planning phase — use `/gsd-new-milestone` to define v1.2 goals.
+**Target features:**
+- OpenRouter provider `extractUsageInfo()` reads `usage.cost` from non-streaming response JSON
+- Post-processor worker reads `usage.cost` from SSE final chunk (streaming) and response JSON (non-streaming)
+- Skip `estimateCostUSD()` when provider-returned cost is available
+- `cost_usd` column in `requests` table populated with real USD amounts from OpenRouter
 
 ## Requirements
 
@@ -34,7 +38,10 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 ### Active
 
-*(Next milestone requirements go here — run `/gsd-new-milestone` to define them)*
+- [ ] **COST-01**: OpenRouter `extractUsageInfo()` reads `usage.cost` from non-streaming responses and returns it as `costUsd`
+- [ ] **COST-02**: Post-processor worker reads `usage.cost` from SSE streaming final chunks and response JSON (non-streaming)
+- [ ] **COST-03**: Skip `estimateCostUSD()` when provider-returned `costUsd` is available
+- [ ] **COST-04**: `cost_usd` column populated with real OpenRouter USD amounts in `requests` table
 
 ### Future
 
@@ -114,4 +121,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-21 after v1.1 milestone — all 9 requirements validated; v1.2 planning pending*
+*Last updated: 2026-05-31 after v1.2 milestone start*
