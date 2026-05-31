@@ -281,6 +281,10 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 				totalTokens,
 				cacheCreationInputTokens,
 				cacheReadInputTokens,
+				// WR-04: mirror the base contract's inputTokens/outputTokens so the
+				// non-streaming OpenRouter path matches consumers that read these fields.
+				inputTokens: promptTokens,
+				outputTokens: completionTokens,
 				costUsd, // per D-01: provider-returned cost from OpenRouter
 			};
 		} catch {
@@ -321,6 +325,10 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 			}
 			// No real provider cost present: OpenRouter cost is authoritative for this
 			// provider, so do not surface the base estimate as costUsd (leave undefined).
+			// WR-02: log the gap so a missing usage.cost is observable rather than silent.
+			log.warn(
+				`Streaming OpenRouter response yielded no usage.cost; recording no provider cost (model=${base.model ?? "unknown"})`,
+			);
 			return { ...base, costUsd: undefined };
 		} catch {
 			// On parse/read failure, fall back to the base result unchanged.
@@ -340,11 +348,22 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		let lastCost: unknown;
 
 		try {
-			while (buffered.length < maxBytes) {
+			// CR-01: OpenRouter's usage.cost arrives in the FINAL message_delta at the
+			// END of the stream. Capping reads at maxBytes from the START would drop the
+			// cost for any stream >32KB (routine for agentic sessions). Instead, read the
+			// whole body but retain only a sliding TAIL window so the final event is never
+			// lost while still bounding memory.
+			for (;;) {
 				const { value, done } = await reader.read();
 				if (done) break;
 				buffered += decoder.decode(value, { stream: true });
+				if (buffered.length > maxBytes) {
+					buffered = buffered.slice(-maxBytes);
+				}
 			}
+			// WR-03: flush any buffered multi-byte UTF-8 sequence so a final chunk that
+			// ends mid-character (e.g. inside usage.cost) is not truncated.
+			buffered += decoder.decode();
 		} finally {
 			reader.cancel().catch(() => {});
 		}
