@@ -268,6 +268,11 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 			const totalTokens =
 				json.usage.total_tokens || promptTokens + completionTokens;
 
+			// COST-01: OpenRouter returns actual USD cost in usage.cost (Optional + Nullable).
+			// typeof guard rejects string/non-numeric values (T-7-01 tampering mitigation).
+			const costUsd =
+				typeof json.usage.cost === "number" ? json.usage.cost : undefined;
+
 			return {
 				model: json.model,
 				promptTokens,
@@ -275,6 +280,7 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 				totalTokens,
 				cacheCreationInputTokens,
 				cacheReadInputTokens,
+				costUsd, // per D-01: provider-returned cost from OpenRouter
 			};
 		} catch {
 			return null;
