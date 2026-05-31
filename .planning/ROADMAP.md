@@ -50,7 +50,11 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
   2. SSE streaming OpenRouter requests have `usage.cost` extracted from the final SSE chunk and surfaced to the post-processor worker
   3. Non-streaming OpenRouter response bodies processed by the post-processor worker have `usage.cost` read from the response JSON
   4. Cost extraction does not break non-OpenRouter providers — Anthropic, Bedrock, Qwen, and other providers continue to function normally
-**Plans**: TBD
+**Plans**: 2 plans
+
+	Plans:
+	- [ ] 07-01-PLAN.md — Provider COST-01: extract costUsd from OpenRouter non-streaming JSON responses in extractUsageInfo()
+	- [ ] 07-02-PLAN.md — Worker COST-02/03: extract providerCostUsd from SSE message_delta and non-streaming JSON body, wire handleEnd() gating
 
 ### Phase 8: Real Cost Persistence
 **Goal**: Actual OpenRouter cost is persisted to the `requests` table instead of unreliable client-side estimates that return $0 for unknown models
@@ -62,6 +66,7 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
   3. Non-OpenRouter providers continue using `estimateCostUSD()` with no regression in cost tracking
 **Plans**: TBD
 
+
 ## Progress
 
 | Phase | Milestone | Plans Complete | Status | Completed |
@@ -72,5 +77,5 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 | 4. Cache Extension & Provider Injection | v1.1 | 3/3 | ✅ Complete | 2026-05-20 |
 | 5. API Layer | v1.1 | 2/2 | ✅ Complete | 2026-05-20 |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | ✅ Complete | 2026-05-21 |
-| 7. OpenRouter Response Cost Extraction | v1.2 | 0/0 | Not started | - |
+| 7. OpenRouter Response Cost Extraction | v1.2 | 0/2 | Not started | - |
 | 8. Real Cost Persistence | v1.2 | 0/0 | Not started | - |
