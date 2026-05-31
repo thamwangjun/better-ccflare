@@ -67,3 +67,10 @@ These pre-existing failures/errors exist in this fresh worktree and are unrelate
 - `bun test packages/proxy packages/database`: 34 failures in unrelated suites — `AutoRefreshScheduler`, `AccountRepository` (openrouter provider preference), `proxy.ts pool-exhausted`. None exercise the cost write path or worker cost gating.
 - `bunx tsc --noEmit` reports missing generated modules (`inline-worker`, `inline-vacuum-worker`, `inline-integrity-check-worker`, `embedded-tiktoken-wasm`) because `bun run build` has not been run in this worktree. These are auto-generated artifacts, not source.
 - `bun run lint`: 221 pre-existing dashboard warnings. The only warnings in my files are `as any` test-harness casts matching the existing `stats-session-cost.test.ts` convention.
+
+## Self-Check: PASSED
+
+- `packages/database/src/repositories/__tests__/request-cost-zero.test.ts` — FOUND
+- `.planning/phases/08-real-cost-persistence/08-02-SUMMARY.md` — FOUND
+- Commit `7111bc97` (RED) — FOUND
+- Commit `aa6e85d1` (GREEN) — FOUND
