@@ -33,16 +33,16 @@ Requirements for OpenRouter cost tracking. Each maps to roadmap phases.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| COST-01 | — | Pending |
-| COST-02 | — | Pending |
-| COST-03 | — | Pending |
-| COST-04 | — | Pending |
+| COST-01 | Phase 7 | Pending |
+| COST-02 | Phase 7 | Pending |
+| COST-03 | Phase 7 | Pending |
+| COST-04 | Phase 8 | Pending |
 
 **Coverage:**
 - v1.2 requirements: 4 total
-- Mapped to phases: 0
-- Unmapped: 4 ⚠️
+- Mapped to phases: 4
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-05-31*
-*Last updated: 2026-05-31 after initial definition*
+*Last updated: 2026-05-31 after roadmap creation*

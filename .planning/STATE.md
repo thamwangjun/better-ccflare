@@ -3,37 +3,38 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: OpenRouter Cost Tracking
 status: planning
-last_updated: "2026-05-31T09:31:57.833Z"
+last_updated: "2026-05-31T09:34:00.000Z"
 last_activity: 2026-05-31
 progress:
-  total_phases: 0
-  completed_phases: 0
+  total_phases: 8
+  completed_phases: 6
   total_plans: 0
   completed_plans: 0
-  percent: 0
+  percent: 75
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-05-21 after v1.1 milestone)
+See: `.planning/PROJECT.md` (updated 2026-05-31 after v1.2 milestone start)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** v1.2 planning — run `/gsd-new-milestone` to start
+**Current focus:** v1.2 Phase 7 — OpenRouter Response Cost Extraction
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-05-31 — Milestone v1.2 started
+Phase: 7 of 8 (OpenRouter Response Cost Extraction)
+Plan: 0 of TBD in current phase
+Status: Ready to plan
+Last activity: 2026-05-31 — Roadmap created; 4 requirements mapped to Phases 7–8
+
+Progress: [███████━━━] 75%
 
 ## Performance Metrics
 
 **Velocity:**
-
-- Total plans completed: 18 (v1.0)
+- Total plans completed: 15 (v1.0 + v1.1)
 - Average duration: —
 - Total execution time: —
 
@@ -41,20 +42,20 @@ Last activity: 2026-05-31 — Milestone v1.2 started
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| v1.0 Phase 1 | 3 | — | — |
-| v1.0 Phase 2 | 1 | — | — |
-| 03 | 2 | - | - |
-| 04 | 3 | - | - |
-| 05 | 2 | - | - |
-| 06 | 4 | - | - |
+| 01 | 3 | — | — |
+| 02 | 1 | — | — |
+| 03 | 2 | — | — |
+| 04 | 3 | — | — |
+| 05 | 2 | — | — |
+| 06 | 4 | — | — |
+| 07 | TBD | — | — |
+| 08 | TBD | — | — |
 
 **Recent Trend:**
-
 - Last 5 plans: —
 - Trend: —
 
 *Updated after each plan completion*
-| Phase 06 P04 | 30 | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -63,11 +64,9 @@ Last activity: 2026-05-31 — Milestone v1.2 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- Phase 3 first: PROV-02 (schema migration) must land before PROV-01 can read the preference field and before PROV-03 can write it via API
-- Phases 4+5 can plan in parallel (no cross-dependency), but Phase 5 depends on Phase 3 schema; Phase 4 also depends on Phase 3
-- Phase 6 depends on Phase 5 (API endpoint must exist before UI can call it)
-- MAINT-05 is a cross-cutting practice enforced throughout — assigned to Phase 6 as a completion gate, not a standalone phase
-- [Phase 06]: Post-review fixes were cosmetic (optional chaining, Biome line-wrap) — no re-verification needed; human UAT confirmed all 3 SC tests passing
+- [Phase 7–8 split]: COST-01/02/03 are grouped in Phase 7 (provider + worker cost extraction from all response paths); COST-04 is Phase 8 (skip estimate, persist). Splitting at this boundary gives a verification checkpoint — cost extraction can be tested before wiring through to persistence.
+- Provider-level cost extraction (COST-01) in `extractUsageInfo()` flows into the proxy context; worker-level extraction (COST-02, COST-03) handles the two response paths (SSE streaming final chunk vs. non-streaming body JSON)
+- COST-04 is the integration point in `pricing.ts` — skip `estimateCostUSD()` when `costUsd` is already available from the provider/worker chain
 
 ### Pending Todos
 
@@ -75,19 +74,10 @@ None yet.
 
 ### Blockers/Concerns
 
-- v1.0 deferred: live non-Anthropic model request test (SC-2 / CACHE-02) — human verification still needed before v1.1 closes
-- Pre-existing 27 Biome lint errors in dashboard React components (unrelated to fork patches) — do not fix unless Phase 6 work touches those files
-
-### Quick Tasks Completed
-
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260521-nd3 | address all 5 items in tech debt | 2026-05-21 | 6b96c598 | [260521-nd3-address-tech-debt-v11](./quick/260521-nd3-address-tech-debt-v11/) |
-| 260529-001 | merge origin/main into thamw-main | 2026-05-29 | 1ef0bec5 | [260529-001-merge-main-into-thamw-main](./quick/260529-001-merge-main-into-thamw-main/) |
-| 260531-cel | add multi-stage Dockerfile that builds from local source | 2026-05-31 | 9dc306db | [260531-cel-add-multi-stage-dockerfile-that-builds-f](./quick/260531-cel-add-multi-stage-dockerfile-that-builds-f/) |
+None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-31T00:00:00Z
-Stopped at: Completed quick task 260531-cel — Dockerfile.local added
+Last session: 2026-05-31T09:34:00Z
+Stopped at: Roadmap created for v1.2 — Phases 7–8 (4 requirements, success criteria defined)
 Resume file: None
