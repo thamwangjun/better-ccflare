@@ -219,6 +219,83 @@ describe("OpenRouterProvider.extractUsageInfo", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// extractStreamingUsage — COST-04: extract real usage.cost from streaming SSE
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Build a minimal Anthropic-style SSE body whose final message_delta carries
+// usage.cost (mirrors the worker read at post-processor.worker.ts message_delta).
+function makeStreamingResponse(cost: unknown): Response {
+	const deltaUsage: Record<string, unknown> = {
+		input_tokens: 100,
+		output_tokens: 10,
+		cache_read_input_tokens: 0,
+	};
+	// Only attach cost when explicitly provided (undefined → omit the key entirely)
+	if (cost !== undefined) {
+		deltaUsage.cost = cost;
+	}
+	const sse =
+		`event: message_start\n` +
+		`data: ${JSON.stringify({
+			message: {
+				model: "anthropic/claude-3-5-sonnet",
+				usage: {
+					input_tokens: 100,
+					output_tokens: 0,
+					cache_creation_input_tokens: 0,
+					cache_read_input_tokens: 0,
+				},
+			},
+		})}\n\n` +
+		`event: message_delta\n` +
+		`data: ${JSON.stringify({ usage: deltaUsage })}\n\n`;
+	return new Response(sse, {
+		headers: { "content-type": "text/event-stream" },
+	});
+}
+
+describe("OpenRouterProvider.extractStreamingUsage cost extraction (COST-04)", () => {
+	it("returns costUsd from streaming usage.cost when it is a number", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.extractUsageInfo(makeStreamingResponse(0.0034));
+
+		expect(usage?.costUsd).toBe(0.0034);
+	});
+
+	it("returns costUsd 0 when streaming usage.cost is zero (free model)", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.extractUsageInfo(makeStreamingResponse(0));
+
+		expect(usage?.costUsd).toBe(0);
+	});
+
+	it("returns costUsd undefined when streaming usage.cost is absent", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.extractUsageInfo(
+			makeStreamingResponse(undefined),
+		);
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("returns costUsd undefined when streaming usage.cost is null", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.extractUsageInfo(makeStreamingResponse(null));
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("returns costUsd undefined when streaming usage.cost is a string (type confusion)", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.extractUsageInfo(
+			makeStreamingResponse("0.0034"),
+		);
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // transformRequestBody — CACHE-02: 3-breakpoint per-block injection
 // ─────────────────────────────────────────────────────────────────────────────
 
