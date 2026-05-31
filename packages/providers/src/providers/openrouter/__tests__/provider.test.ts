@@ -111,6 +111,111 @@ describe("OpenRouterProvider.extractUsageInfo", () => {
 		expect(usage?.completionTokens).toBe(10);
 		expect(usage?.totalTokens).toBe(110);
 	});
+
+	// COST-01: extract usage.cost as costUsd from non-streaming JSON responses
+	it("returns costUsd from usage.cost when it is a number", async () => {
+		const provider = new OpenRouterProvider();
+		const responseBody = {
+			model: "anthropic/claude-3-5-sonnet",
+			usage: {
+				prompt_tokens: 100,
+				completion_tokens: 10,
+				total_tokens: 110,
+				cost: 0.0012,
+				prompt_tokens_details: {},
+			},
+		};
+		const response = new Response(JSON.stringify(responseBody), {
+			headers: { "content-type": "application/json" },
+		});
+
+		const usage = await provider.extractUsageInfo(response);
+
+		expect(usage?.costUsd).toBe(0.0012);
+	});
+
+	it("returns costUsd undefined when usage.cost is null", async () => {
+		const provider = new OpenRouterProvider();
+		const responseBody = {
+			model: "anthropic/claude-3-5-sonnet",
+			usage: {
+				prompt_tokens: 100,
+				completion_tokens: 10,
+				total_tokens: 110,
+				cost: null,
+				prompt_tokens_details: {},
+			},
+		};
+		const response = new Response(JSON.stringify(responseBody), {
+			headers: { "content-type": "application/json" },
+		});
+
+		const usage = await provider.extractUsageInfo(response);
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("returns costUsd undefined when usage.cost is absent", async () => {
+		const provider = new OpenRouterProvider();
+		const responseBody = {
+			model: "anthropic/claude-3-5-sonnet",
+			usage: {
+				prompt_tokens: 100,
+				completion_tokens: 10,
+				total_tokens: 110,
+				prompt_tokens_details: {},
+			},
+		};
+		const response = new Response(JSON.stringify(responseBody), {
+			headers: { "content-type": "application/json" },
+		});
+
+		const usage = await provider.extractUsageInfo(response);
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("returns costUsd 0 when usage.cost is zero", async () => {
+		const provider = new OpenRouterProvider();
+		const responseBody = {
+			model: "anthropic/claude-3-5-sonnet",
+			usage: {
+				prompt_tokens: 100,
+				completion_tokens: 10,
+				total_tokens: 110,
+				cost: 0,
+				prompt_tokens_details: {},
+			},
+		};
+		const response = new Response(JSON.stringify(responseBody), {
+			headers: { "content-type": "application/json" },
+		});
+
+		const usage = await provider.extractUsageInfo(response);
+
+		expect(usage?.costUsd).toBe(0);
+	});
+
+	it("returns costUsd undefined when usage.cost is a string (type confusion)", async () => {
+		const provider = new OpenRouterProvider();
+		const responseBody = {
+			model: "anthropic/claude-3-5-sonnet",
+			usage: {
+				prompt_tokens: 100,
+				completion_tokens: 10,
+				total_tokens: 110,
+				cost: "0.0012",
+				prompt_tokens_details: {},
+			},
+		};
+		const response = new Response(JSON.stringify(responseBody), {
+			headers: { "content-type": "application/json" },
+		});
+
+		const usage = await provider.extractUsageInfo(response);
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
