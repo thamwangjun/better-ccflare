@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-05-21 after v1.1 milestone)
 Phase: —
 Plan: —
 Status: v1.1 archived — planning v1.2
-Last activity: 2026-05-29 - Completed quick task 260529-001: merge origin/main into thamw-main
+Last activity: 2026-05-31 - Completed quick task 260531-cel: add multi-stage Dockerfile that builds from local source
 
 Progress: [──────────] v1.1 complete ✅ | v1.2 not started
 
@@ -87,9 +87,10 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260521-nd3 | address all 5 items in tech debt | 2026-05-21 | 6b96c598 | [260521-nd3-address-tech-debt-v11](./quick/260521-nd3-address-tech-debt-v11/) |
 | 260529-001 | merge origin/main into thamw-main | 2026-05-29 | 1ef0bec5 | [260529-001-merge-main-into-thamw-main](./quick/260529-001-merge-main-into-thamw-main/) |
+| 260531-cel | add multi-stage Dockerfile that builds from local source | 2026-05-31 | 9dc306db | [260531-cel-add-multi-stage-dockerfile-that-builds-f](./quick/260531-cel-add-multi-stage-dockerfile-that-builds-f/) |
 
 ## Session Continuity
 
-Last session: 2026-05-21T07:45:42.346Z
-Stopped at: Completed 06-04-PLAN.md — Phase 6 fully closed
+Last session: 2026-05-31T00:00:00Z
+Stopped at: Completed quick task 260531-cel — Dockerfile.local added
 Resume file: None
