@@ -2,15 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: OpenRouter Cost Tracking
-status: executing
-last_updated: "2026-05-31T11:24:52.370Z"
-last_activity: 2026-05-31 -- Phase 07 planning complete
+status: ready_to_plan
+last_updated: 2026-05-31T12:46:47.570Z
+last_activity: 2026-05-31 -- Phase 07 execution started
 progress:
   total_phases: 2
   completed_phases: 0
   total_plans: 2
-  completed_plans: 0
+  completed_plans: 2
   percent: 0
+stopped_at: Phase 07 complete (2/2) — ready to discuss Phase 8
 ---
 
 # Project State
@@ -20,14 +21,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-05-31 after v1.2 milestone start)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** v1.2 Phase 7 — OpenRouter Response Cost Extraction
+**Current focus:** Phase 8 — real cost persistence
 
 ## Current Position
 
-Phase: 7 of 8 (OpenRouter Response Cost Extraction)
-Plan: 0 of 2 in current phase
-Status: Ready to execute
-Last activity: 2026-05-31 -- Phase 07 planning complete
+Phase: 8
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-05-31
 
 Progress: [███████━━━] 75%
 
@@ -35,7 +36,7 @@ Progress: [███████━━━] 75%
 
 **Velocity:**
 
-- Total plans completed: 15 (v1.0 + v1.1)
+- Total plans completed: 17 (v1.0 + v1.1)
 - Average duration: —
 - Total execution time: —
 
@@ -49,7 +50,7 @@ Progress: [███████━━━] 75%
 | 04 | 3 | — | — |
 | 05 | 2 | — | — |
 | 06 | 4 | — | — |
-| 07 | 2 | — | — |
+| 07 | 2 | - | - |
 | 08 | TBD | — | — |
 
 **Recent Trend:**

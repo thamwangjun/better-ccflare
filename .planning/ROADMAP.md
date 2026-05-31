@@ -36,7 +36,7 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 
 **Milestone Goal:** Capture actual usage cost from OpenRouter API responses instead of relying on client-side estimates that return $0 for unknown models.
 
-- [ ] **Phase 7: OpenRouter Response Cost Extraction** - Extract `usage.cost` from OpenRouter responses (non-streaming provider, streaming SSE final chunks, non-streaming worker body JSON) and return it as `costUsd`
+- [x] **Phase 7: OpenRouter Response Cost Extraction** - Extract `usage.cost` from OpenRouter responses (non-streaming provider, streaming SSE final chunks, non-streaming worker body JSON) and return it as `costUsd` (completed 2026-05-31)
 - [ ] **Phase 8: Real Cost Persistence** - Skip `estimateCostUSD()` when provider-returned `costUsd` is available; `cost_usd` in `requests` table reflects real OpenRouter USD amounts
 
 ## Phase Details
@@ -53,8 +53,8 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 **Plans**: 2 plans
 
 	Plans:
-	- [ ] 07-01-PLAN.md — Provider COST-01: extract costUsd from OpenRouter non-streaming JSON responses in extractUsageInfo()
-	- [ ] 07-02-PLAN.md — Worker COST-02/03: extract providerCostUsd from SSE message_delta and non-streaming JSON body, wire handleEnd() gating
+	- [x] 07-01-PLAN.md — Provider COST-01: extract costUsd from OpenRouter non-streaming JSON responses in extractUsageInfo()
+	- [x] 07-02-PLAN.md — Worker COST-02/03: extract providerCostUsd from SSE message_delta and non-streaming JSON body, wire handleEnd() gating
 
 ### Phase 8: Real Cost Persistence
 **Goal**: Actual OpenRouter cost is persisted to the `requests` table instead of unreliable client-side estimates that return $0 for unknown models
@@ -77,5 +77,5 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 | 4. Cache Extension & Provider Injection | v1.1 | 3/3 | ✅ Complete | 2026-05-20 |
 | 5. API Layer | v1.1 | 2/2 | ✅ Complete | 2026-05-20 |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | ✅ Complete | 2026-05-21 |
-| 7. OpenRouter Response Cost Extraction | v1.2 | 0/2 | Not started | - |
+| 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | Complete    | 2026-05-31 |
 | 8. Real Cost Persistence | v1.2 | 0/0 | Not started | - |
