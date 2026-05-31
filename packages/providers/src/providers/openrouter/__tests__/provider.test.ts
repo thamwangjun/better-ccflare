@@ -257,7 +257,9 @@ function makeStreamingResponse(cost: unknown): Response {
 describe("OpenRouterProvider.extractStreamingUsage cost extraction (COST-04)", () => {
 	it("returns costUsd from streaming usage.cost when it is a number", async () => {
 		const provider = new OpenRouterProvider();
-		const usage = await provider.extractUsageInfo(makeStreamingResponse(0.0034));
+		const usage = await provider.extractUsageInfo(
+			makeStreamingResponse(0.0034),
+		);
 
 		expect(usage?.costUsd).toBe(0.0034);
 	});

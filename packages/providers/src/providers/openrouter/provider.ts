@@ -1,3 +1,4 @@
+import { BUFFER_SIZES } from "@better-ccflare/core";
 import { Logger } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { AnthropicCompatibleProvider } from "../anthropic-compatible/provider";
@@ -285,5 +286,100 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		} catch {
 			return null;
 		}
+	}
+
+	// COST-04 (D-01): override the streaming usage path so the live response-processor
+	// returns OpenRouter's real usage.cost (from the final SSE message_delta) instead of
+	// the base class's estimate. The base's local SSE types omit `cost`, so we read it
+	// from an independent clone here.
+	protected override async extractStreamingUsage(
+		clone: Response,
+		originalHeaders: Headers,
+	): Promise<{
+		model?: string;
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		costUsd?: number;
+		inputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		outputTokens?: number;
+	} | null> {
+		// Clone BEFORE delegating: super consumes the body reader (single-use body).
+		const costClone = clone.clone();
+
+		const base = await super.extractStreamingUsage(clone, originalHeaders);
+		if (!base) return base;
+
+		try {
+			const realCost = await this.readFinalSseCost(costClone);
+			// typeof guard rejects string/non-numeric values (T-7-01 tampering mitigation).
+			// A real $0 from a :free model is a valid number and overwrites the estimate.
+			if (typeof realCost === "number") {
+				return { ...base, costUsd: realCost };
+			}
+			// No real provider cost present: OpenRouter cost is authoritative for this
+			// provider, so do not surface the base estimate as costUsd (leave undefined).
+			return { ...base, costUsd: undefined };
+		} catch {
+			// On parse/read failure, fall back to the base result unchanged.
+			return base;
+		}
+	}
+
+	// Read usage.cost from the final SSE message_delta event. Returns the raw value
+	// (caller applies the typeof guard) or undefined when absent.
+	private async readFinalSseCost(clone: Response): Promise<unknown> {
+		const reader = clone.body?.getReader();
+		if (!reader) return undefined;
+
+		const maxBytes = BUFFER_SIZES.ANTHROPIC_STREAM_CAP_BYTES;
+		const decoder = new TextDecoder();
+		let buffered = "";
+		let lastCost: unknown;
+
+		try {
+			while (buffered.length < maxBytes) {
+				const { value, done } = await reader.read();
+				if (done) break;
+				buffered += decoder.decode(value, { stream: true });
+			}
+		} finally {
+			reader.cancel().catch(() => {});
+		}
+
+		const lines = buffered.split("\n");
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i].trim();
+			if (
+				line.startsWith("event: message_delta") ||
+				line.startsWith("event:message_delta")
+			) {
+				for (let j = i + 1; j < lines.length; j++) {
+					const nextLine = lines[j].trim();
+					if (nextLine.startsWith("data:")) {
+						const jsonStr = nextLine.startsWith("data: ")
+							? nextLine.slice(6)
+							: nextLine.slice(5);
+						try {
+							const data = JSON.parse(jsonStr) as {
+								usage?: { cost?: unknown };
+							};
+							if (data.usage && "cost" in data.usage) {
+								lastCost = data.usage.cost;
+							}
+						} catch {
+							// Ignore parse errors for this event.
+						}
+						break;
+					} else if (nextLine && !nextLine.startsWith("event:")) {
+						break;
+					}
+				}
+			}
+		}
+
+		return lastCost;
 	}
 }
