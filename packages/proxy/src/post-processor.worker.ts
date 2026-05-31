@@ -45,6 +45,7 @@ interface RequestState {
 		outputTokensComputed?: number;
 		totalTokens?: number;
 		costUsd?: number;
+		providerCostUsd?: number; // per D-06: provider-returned cost from OpenRouter (distinct from costUsd estimate)
 		tokensPerSecond?: number;
 	};
 	lastActivity: number;
@@ -292,6 +293,7 @@ function extractUsageFromJson(
 			cache_read_input_tokens?: number;
 			cache_creation_input_tokens?: number;
 			output_tokens?: number;
+			cost?: number; // per D-05: OpenRouter provider-returned cost
 		};
 	},
 	state: RequestState,
@@ -308,6 +310,11 @@ function extractUsageFromJson(
 	state.usage.cacheCreationInputTokens =
 		usageObj.cache_creation_input_tokens ?? 0;
 	state.usage.outputTokens = usageObj.output_tokens ?? 0;
+
+	// per D-05 (COST-03): extract OpenRouter provider-returned cost with typeof guard
+	if (typeof usageObj.cost === "number") {
+		state.usage.providerCostUsd = usageObj.cost;
+	}
 
 	// Calculate total tokens
 	const prompt =
@@ -367,6 +374,10 @@ function extractUsageFromData(
 				if (parsed.usage.cache_read_input_tokens !== undefined) {
 					state.usage.cacheReadInputTokens =
 						parsed.usage.cache_read_input_tokens;
+				}
+				// per D-03 (COST-02): extract OpenRouter provider-returned cost with typeof guard
+				if (typeof parsed.usage.cost === "number") {
+					state.usage.providerCostUsd = parsed.usage.cost;
 				}
 				return; // No further processing needed
 			}
@@ -662,12 +673,18 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			(state.usage.cacheReadInputTokens || 0) +
 			(state.usage.cacheCreationInputTokens || 0);
 
-		state.usage.costUsd = await estimateCostUSD(state.usage.model, {
-			inputTokens: state.usage.inputTokens,
-			outputTokens: finalOutputTokens,
-			cacheReadInputTokens: state.usage.cacheReadInputTokens,
-			cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-		});
+		// per D-04: when the provider returned a cost via SSE (COST-02) or JSON
+		// (COST-03), use it directly; otherwise fall back to the client-side estimate.
+		if (state.usage.providerCostUsd !== undefined) {
+			state.usage.costUsd = state.usage.providerCostUsd;
+		} else {
+			state.usage.costUsd = await estimateCostUSD(state.usage.model, {
+				inputTokens: state.usage.inputTokens,
+				outputTokens: finalOutputTokens,
+				cacheReadInputTokens: state.usage.cacheReadInputTokens,
+				cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+			});
+		}
 
 		// Calculate tokens per second - zai specific vs other providers
 		if (finalOutputTokens > 0) {
