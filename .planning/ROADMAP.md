@@ -64,7 +64,11 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
   1. When OpenRouter provider-returned `costUsd` is available, `estimateCostUSD()` is skipped and the API-returned value is used
   2. The `cost_usd` column in the `requests` table contains real USD amounts from OpenRouter's `usage.cost` for both streaming and non-streaming requests
   3. Non-OpenRouter providers continue using `estimateCostUSD()` with no regression in cost tracking
-**Plans**: TBD
+**Plans**: 2 plans
+
+	Plans:
+	- [ ] 08-01-PLAN.md — D-01/D-02: extractStreamingUsage override on OpenRouterProvider (clone-before-super, typeof guard) so the live streaming path returns real usage.cost
+	- [ ] 08-02-PLAN.md — D-03/D-04: switch both writers to ?? null (persist real $0), map worker estimate 0→undefined (block estimate-$0), + writer/worker tests
 
 
 ## Progress
@@ -78,4 +82,5 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 | 5. API Layer | v1.1 | 2/2 | ✅ Complete | 2026-05-20 |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | ✅ Complete | 2026-05-21 |
 | 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | Complete    | 2026-05-31 |
-| 8. Real Cost Persistence | v1.2 | 0/0 | Not started | - |
+| 8. Real Cost Persistence | v1.2 | 0/2 | Not started | - |
+</content>
