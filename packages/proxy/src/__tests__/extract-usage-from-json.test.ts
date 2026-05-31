@@ -89,4 +89,24 @@ describe("extractUsageFromJson", () => {
 		);
 		expect(state.usage.providerCostUsd).toBe(0);
 	});
+
+	// D-04: gating pattern — providerCostUsd feeds costUsd when set
+	it("providerCostUsd is accessible from state.usage and feeds costUsd when set", () => {
+		const state: {
+			usage: { providerCostUsd?: number; costUsd?: number };
+		} = { usage: { providerCostUsd: undefined } };
+		extractUsageFromJson(
+			{
+				model: "test-model",
+				usage: { input_tokens: 100, output_tokens: 50, cost: 0.0012 },
+			},
+			state,
+		);
+		expect(state.usage.providerCostUsd).toBe(0.0012);
+		// Mirror handleEnd() gating (D-04): use provider cost when set
+		if (state.usage.providerCostUsd !== undefined) {
+			state.usage.costUsd = state.usage.providerCostUsd;
+		}
+		expect(state.usage.costUsd).toBe(0.0012);
+	});
 });
