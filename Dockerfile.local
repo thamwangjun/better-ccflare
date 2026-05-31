@@ -1,0 +1,64 @@
+# Multi-stage Dockerfile that builds better-ccflare from local source.
+# Use this for local fork builds instead of Dockerfile (which downloads upstream releases).
+#
+# Usage:
+#   docker build --no-cache -f Dockerfile.local -t better-ccflare:local .
+#   docker build --no-cache -f Dockerfile.local --build-arg TARGETARCH=arm64 -t better-ccflare:local-arm64 .
+
+# Stage 1 — Builder
+FROM oven/bun:latest AS builder
+WORKDIR /app
+
+# Copy all source (bun install needs workspace structure intact)
+COPY . .
+
+# Install deps using the committed lockfile
+RUN bun install --frozen-lockfile
+
+# Build dashboard first (CLI embeds it), then build arch-specific CLI binary
+ARG TARGETARCH=amd64
+RUN bun run build:dashboard && \
+    cd apps/cli && \
+    if [ "${TARGETARCH}" = "arm64" ]; then \
+      bun run build:linux-arm64; \
+    else \
+      bun run build:linux-amd64; \
+    fi
+
+# Stage 2 — Runtime (mirrors existing Dockerfile structure)
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y sqlite3 ca-certificates curl file && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+ARG TARGETARCH=amd64
+COPY --from=builder /app/apps/cli/dist/better-ccflare-linux-${TARGETARCH} /usr/local/bin/better-ccflare
+
+RUN chmod +x /usr/local/bin/better-ccflare && \
+    /usr/local/bin/better-ccflare --version
+
+RUN useradd -r -u 1000 -m -s /bin/bash ccflare && \
+    mkdir -p /data /app/logs && \
+    chown -R ccflare:ccflare /data /app
+
+ENV NODE_ENV=production
+ENV BETTER_CCFLARE_DB_PATH=/data/better-ccflare.db
+ENV XDG_CONFIG_HOME=/data
+ENV BETTER_CCFLARE_LOG_DIR=/app/logs
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+LABEL org.opencontainers.image.title="better-ccflare"
+LABEL org.opencontainers.image.description="Load balancer proxy for Claude API — local fork build"
+
+VOLUME ["/data"]
+USER ccflare
+
+ENTRYPOINT ["/usr/local/bin/better-ccflare"]
+CMD ["--serve", "--port", "8080"]
