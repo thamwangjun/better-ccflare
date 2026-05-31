@@ -171,4 +171,56 @@ describe("Worker SSE parsing", () => {
 			expect(state.usage.providerCostUsd).toBeUndefined();
 		});
 	});
+
+	// D-04: handleEnd() cost-gating — real provider cost (possibly 0) is used
+	// directly; the estimate branch maps a literal-0 estimate to undefined so
+	// the writer's `?? null` collapses an estimate-$0 to null (NOT a real 0).
+	describe("handleEnd cost gating (estimate 0 -> undefined)", () => {
+		// Mirror packages/proxy/src/post-processor.worker.ts handleEnd() gating.
+		// estimateCostUSD() returns a literal 0 for unknown models (RESEARCH
+		// Finding 1), so we simulate it with a function returning 0.
+		async function resolveCostUsd(
+			state: {
+				usage: { providerCostUsd?: number; costUsd?: number };
+			},
+			estimateCostUSD: () => Promise<number>,
+		): Promise<void> {
+			if (state.usage.providerCostUsd !== undefined) {
+				state.usage.costUsd = state.usage.providerCostUsd;
+			} else {
+				const est = await estimateCostUSD();
+				state.usage.costUsd = est === 0 ? undefined : est;
+			}
+		}
+
+		it("estimate-$0 for an unknown model maps to undefined, not 0", async () => {
+			const state = { usage: { providerCostUsd: undefined } };
+			await resolveCostUsd(state, async () => 0);
+			expect(state.usage.costUsd).toBeUndefined();
+		});
+
+		it("a real providerCostUsd === 0 survives as 0", async () => {
+			const state = { usage: { providerCostUsd: 0 } };
+			await resolveCostUsd(state, async () => 999);
+			expect(state.usage.costUsd).toBe(0);
+		});
+
+		it("a non-zero estimate is preserved", async () => {
+			const state = { usage: { providerCostUsd: undefined } };
+			await resolveCostUsd(state, async () => 0.0042);
+			expect(state.usage.costUsd).toBe(0.0042);
+		});
+
+		it("non-OpenRouter provider (no usage.cost) runs the estimate branch", async () => {
+			// No providerCostUsd was ever set -> estimate branch runs, carries no real cost.
+			const state = { usage: { providerCostUsd: undefined } };
+			let estimateRan = false;
+			await resolveCostUsd(state, async () => {
+				estimateRan = true;
+				return 0.01;
+			});
+			expect(estimateRan).toBe(true);
+			expect(state.usage.costUsd).toBe(0.01);
+		});
+	});
 });

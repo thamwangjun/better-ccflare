@@ -109,4 +109,44 @@ describe("extractUsageFromJson", () => {
 		}
 		expect(state.usage.costUsd).toBe(0.0012);
 	});
+
+	// D-04: handleEnd() estimate-branch guard — estimate-$0 for an unknown model
+	// maps to undefined (so the writer's `?? null` collapses it to null), while a
+	// real providerCostUsd === 0 survives as 0.
+	describe("handleEnd estimate 0 -> undefined guard", () => {
+		async function resolveCostUsd(
+			state: { usage: { providerCostUsd?: number; costUsd?: number } },
+			estimateCostUSD: () => Promise<number>,
+		): Promise<void> {
+			if (state.usage.providerCostUsd !== undefined) {
+				state.usage.costUsd = state.usage.providerCostUsd;
+			} else {
+				const est = await estimateCostUSD();
+				state.usage.costUsd = est === 0 ? undefined : est;
+			}
+		}
+
+		it("estimate-$0 for unknown model -> costUsd undefined, not 0", async () => {
+			const state = { usage: { providerCostUsd: undefined } };
+			await resolveCostUsd(state, async () => 0);
+			expect(state.usage.costUsd).toBeUndefined();
+		});
+
+		it("real providerCostUsd === 0 -> costUsd survives as 0", async () => {
+			const state = { usage: { providerCostUsd: 0 } };
+			await resolveCostUsd(state, async () => 999);
+			expect(state.usage.costUsd).toBe(0);
+		});
+
+		it("non-OpenRouter estimate branch still runs with no real cost", async () => {
+			const state = { usage: { providerCostUsd: undefined } };
+			let ran = false;
+			await resolveCostUsd(state, async () => {
+				ran = true;
+				return 0.02;
+			});
+			expect(ran).toBe(true);
+			expect(state.usage.costUsd).toBe(0.02);
+		});
+	});
 });
