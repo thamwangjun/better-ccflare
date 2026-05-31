@@ -37,7 +37,7 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 **Milestone Goal:** Capture actual usage cost from OpenRouter API responses instead of relying on client-side estimates that return $0 for unknown models.
 
 - [x] **Phase 7: OpenRouter Response Cost Extraction** - Extract `usage.cost` from OpenRouter responses (non-streaming provider, streaming SSE final chunks, non-streaming worker body JSON) and return it as `costUsd` (completed 2026-05-31)
-- [ ] **Phase 8: Real Cost Persistence** - Skip `estimateCostUSD()` when provider-returned `costUsd` is available; `cost_usd` in `requests` table reflects real OpenRouter USD amounts
+- [x] **Phase 8: Real Cost Persistence** - Skip `estimateCostUSD()` when provider-returned `costUsd` is available; `cost_usd` in `requests` table reflects real OpenRouter USD amounts (completed 2026-05-31)
 
 ## Phase Details
 
@@ -67,8 +67,8 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 **Plans**: 2 plans
 
 	Plans:
-	- [ ] 08-01-PLAN.md — D-01/D-02: extractStreamingUsage override on OpenRouterProvider (clone-before-super, typeof guard) so the live streaming path returns real usage.cost
-	- [ ] 08-02-PLAN.md — D-03/D-04: switch both writers to ?? null (persist real $0), map worker estimate 0→undefined (block estimate-$0), + writer/worker tests
+	- [x] 08-01-PLAN.md — D-01/D-02: extractStreamingUsage override on OpenRouterProvider (clone-before-super, typeof guard) so the live streaming path returns real usage.cost
+	- [x] 08-02-PLAN.md — D-03/D-04: switch both writers to ?? null (persist real $0), map worker estimate 0→undefined (block estimate-$0), + writer/worker tests
 
 
 ## Progress
@@ -82,5 +82,5 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 | 5. API Layer | v1.1 | 2/2 | ✅ Complete | 2026-05-20 |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | ✅ Complete | 2026-05-21 |
 | 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | Complete    | 2026-05-31 |
-| 8. Real Cost Persistence | v1.2 | 0/2 | Not started | - |
+| 8. Real Cost Persistence | v1.2 | 2/2 | Complete   | 2026-05-31 |
 </content>

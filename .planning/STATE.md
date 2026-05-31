@@ -3,9 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: OpenRouter Cost Tracking
 status: executing
-stopped_at: context exhaustion at 75% (2026-05-31)
-last_updated: "2026-05-31T14:30:27.985Z"
-last_activity: 2026-05-31 -- Phase 08 planning complete
+last_updated: "2026-05-31T15:50:42.419Z"
+last_activity: 2026-05-31 -- Phase 08 execution started
 progress:
   total_phases: 2
   completed_phases: 1
@@ -21,14 +20,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-05-31 after v1.2 milestone start)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Phase 8 — real cost persistence
+**Current focus:** Phase 08 — real-cost-persistence
 
 ## Current Position
 
-Phase: 8
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-05-31 -- Phase 08 planning complete
+Phase: 08 (real-cost-persistence) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 08
+Last activity: 2026-05-31 -- Phase 08 execution started
 
 Progress: [███████━━━] 75%
 
