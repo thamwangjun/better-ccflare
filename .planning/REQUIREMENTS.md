@@ -12,7 +12,7 @@ Requirements for OpenRouter cost tracking. Each maps to roadmap phases.
 - [x] **COST-01**: OpenRouter `extractUsageInfo()` reads `usage.cost` from non-streaming JSON responses and returns it as `costUsd`
 - [x] **COST-02**: Post-processor worker reads `usage.cost` from SSE streaming final chunks
 - [x] **COST-03**: Post-processor worker reads `usage.cost` from non-streaming response body JSON
-- [ ] **COST-04**: Skip `estimateCostUSD()` when provider-returned `costUsd` is already available, ensuring `cost_usd` ends up in `requests` table for OpenRouter accounts
+- [x] **COST-04**: Skip `estimateCostUSD()` when provider-returned `costUsd` is already available, ensuring `cost_usd` ends up in `requests` table for OpenRouter accounts
 
 ## Future Requirements
 
@@ -36,7 +36,7 @@ Requirements for OpenRouter cost tracking. Each maps to roadmap phases.
 | COST-01 | Phase 7 | Complete |
 | COST-02 | Phase 7 | Complete |
 | COST-03 | Phase 7 | Complete |
-| COST-04 | Phase 8 | Pending |
+| COST-04 | Phase 8 | Complete |
 
 **Coverage:**
 - v1.2 requirements: 4 total

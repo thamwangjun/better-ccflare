@@ -82,5 +82,5 @@ Full details: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 | 5. API Layer | v1.1 | 2/2 | ✅ Complete | 2026-05-20 |
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | ✅ Complete | 2026-05-21 |
 | 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | Complete    | 2026-05-31 |
-| 8. Real Cost Persistence | v1.2 | 2/2 | Complete   | 2026-05-31 |
+| 8. Real Cost Persistence | v1.2 | 2/2 | Complete    | 2026-05-31 |
 </content>
