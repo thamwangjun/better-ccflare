@@ -676,14 +676,19 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		// per D-04: when the provider returned a cost via SSE (COST-02) or JSON
 		// (COST-03), use it directly; otherwise fall back to the client-side estimate.
 		if (state.usage.providerCostUsd !== undefined) {
+			// Real provider cost (possibly a genuine 0) persists unchanged.
 			state.usage.costUsd = state.usage.providerCostUsd;
 		} else {
-			state.usage.costUsd = await estimateCostUSD(state.usage.model, {
+			// per D-04: estimateCostUSD() returns a literal 0 for unknown models.
+			// Map that estimate-$0 to undefined so the writer's `?? null` collapses
+			// it to null instead of persisting it as a real 0.
+			const est = await estimateCostUSD(state.usage.model, {
 				inputTokens: state.usage.inputTokens,
 				outputTokens: finalOutputTokens,
 				cacheReadInputTokens: state.usage.cacheReadInputTokens,
 				cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
 			});
+			state.usage.costUsd = est === 0 ? undefined : est;
 		}
 
 		// Calculate tokens per second - zai specific vs other providers
