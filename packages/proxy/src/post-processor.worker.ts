@@ -673,12 +673,18 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 			(state.usage.cacheReadInputTokens || 0) +
 			(state.usage.cacheCreationInputTokens || 0);
 
-		state.usage.costUsd = await estimateCostUSD(state.usage.model, {
-			inputTokens: state.usage.inputTokens,
-			outputTokens: finalOutputTokens,
-			cacheReadInputTokens: state.usage.cacheReadInputTokens,
-			cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-		});
+		// per D-04: when the provider returned a cost via SSE (COST-02) or JSON
+		// (COST-03), use it directly; otherwise fall back to the client-side estimate.
+		if (state.usage.providerCostUsd !== undefined) {
+			state.usage.costUsd = state.usage.providerCostUsd;
+		} else {
+			state.usage.costUsd = await estimateCostUSD(state.usage.model, {
+				inputTokens: state.usage.inputTokens,
+				outputTokens: finalOutputTokens,
+				cacheReadInputTokens: state.usage.cacheReadInputTokens,
+				cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
+			});
+		}
 
 		// Calculate tokens per second - zai specific vs other providers
 		if (finalOutputTokens > 0) {
