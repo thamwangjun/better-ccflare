@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-05-31 after v1.2 milestone start)
 Phase: 08
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-05-31
+Last activity: 2026-06-01 - Completed quick task 260601-lvx: Replace inline-copy test functions with imports of real production functions
 
 Progress: [███████━━━] 75%
 
@@ -84,6 +84,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260531-l6i | Trim CLAUDE.md, keep important parts, remove redundant parts | 2026-05-31 | 58324d3f | [260531-l6i-trim-claude-md-keep-important-parts-remo](./quick/260531-l6i-trim-claude-md-keep-important-parts-remo/) |
+| 260601-lvx | Replace inline-copy test functions with imports of real production functions | 2026-06-01 | f5ab21cb | [260601-lvx-replace-inline-copy-test-functions-with-](./quick/260601-lvx-replace-inline-copy-test-functions-with-/) |
 
 ## Session Continuity
 
