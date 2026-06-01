@@ -292,6 +292,38 @@ export class OpenRouterProvider extends AnthropicCompatibleProvider {
 		}
 	}
 
+	// COST-04 (D-01): public parseUsage so the response-processor streaming branch
+	// (guarded by `isStream && ctx.provider.parseUsage`) reaches OpenRouter's real-cost
+	// streaming extraction instead of falling through to the non-streaming extractUsageInfo
+	// branch. Mirrors the bedrock parseUsage content-type pattern but delegates streaming
+	// to this provider's extractStreamingUsage (which reads usage.cost from the final SSE
+	// message_delta). Scoped to OpenRouter per D-02 — base classes are left untouched.
+	async parseUsage(response: Response): Promise<{
+		model?: string;
+		promptTokens?: number;
+		completionTokens?: number;
+		totalTokens?: number;
+		costUsd?: number;
+		inputTokens?: number;
+		cacheReadInputTokens?: number;
+		cacheCreationInputTokens?: number;
+		outputTokens?: number;
+	} | null> {
+		const contentType = response.headers.get("content-type");
+
+		// Streaming path: delegate to extractStreamingUsage for the real usage.cost.
+		// Pass a clone since extractStreamingUsage consumes the body reader.
+		if (
+			this.config.supportsStreaming &&
+			contentType?.includes("text/event-stream")
+		) {
+			return this.extractStreamingUsage(response.clone(), response.headers);
+		}
+
+		// Non-streaming path: delegate to extractUsageInfo unchanged.
+		return this.extractUsageInfo(response);
+	}
+
 	// COST-04 (D-01): override the streaming usage path so the live response-processor
 	// returns OpenRouter's real usage.cost (from the final SSE message_delta) instead of
 	// the base class's estimate. The base's local SSE types omit `cost`, so we read it
