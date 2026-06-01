@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { extractUsageFromData } from "../usage-extraction";
 
 describe("Worker SSE parsing", () => {
 	// Import the functions inline to test them
@@ -58,38 +59,6 @@ describe("Worker SSE parsing", () => {
 	});
 
 	describe("extractUsageFromData with eventType", () => {
-		// Simulate the function signature change
-		function extractUsageFromData(
-			data: string,
-			eventType: string,
-			state: { usage: Record<string, unknown> },
-		): void {
-			const parsed = JSON.parse(data);
-
-			// Handle message_start - check both parsed.type and eventType
-			const isMessageStart =
-				parsed.type === "message_start" || eventType === "message_start";
-			if (isMessageStart) {
-				if (parsed.message?.usage) {
-					state.usage.inputTokens = parsed.message.usage.input_tokens || 0;
-					state.usage.model = parsed.message.model;
-				}
-			}
-
-			// Handle message_delta - check both parsed.type and eventType
-			const isMessageDelta =
-				parsed.type === "message_delta" || eventType === "message_delta";
-			if (isMessageDelta) {
-				if (parsed.usage) {
-					state.usage.outputTokens = parsed.usage.output_tokens || 0;
-					// per D-03: extract OpenRouter provider-returned cost with typeof guard
-					if (typeof parsed.usage.cost === "number") {
-						state.usage.providerCostUsd = parsed.usage.cost;
-					}
-				}
-			}
-		}
-
 		it("extracts usage from Anthropic format (type in JSON)", () => {
 			const state = { usage: {} };
 			const data = JSON.stringify({
