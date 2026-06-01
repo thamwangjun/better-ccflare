@@ -298,6 +298,88 @@ describe("OpenRouterProvider.extractStreamingUsage cost extraction (COST-04)", (
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
+// parseUsage — COST-04: streaming branch reaches real-cost extraction
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("OpenRouterProvider.parseUsage streaming cost extraction (COST-04)", () => {
+	it("returns costUsd from streaming usage.cost when it is a number", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage(makeStreamingResponse(0.0034));
+
+		expect(usage?.costUsd).toBe(0.0034);
+	});
+
+	it("returns costUsd 0 when streaming usage.cost is zero (free model)", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage(makeStreamingResponse(0));
+
+		expect(usage?.costUsd).toBe(0);
+	});
+
+	it("returns costUsd undefined when streaming usage.cost is absent", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage(makeStreamingResponse(undefined));
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("returns costUsd undefined when streaming usage.cost is null", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage(makeStreamingResponse(null));
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("returns costUsd undefined when streaming usage.cost is a string (type confusion)", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage(makeStreamingResponse("0.0034"));
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// parseUsage — COST-04: streaming branch reaches real-cost extraction
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("OpenRouterProvider.parseUsage streaming cost extraction (COST-04)", () => {
+	it("parseUsage returns costUsd from streaming usage.cost when it is a number", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage?.(makeStreamingResponse(0.0034));
+
+		expect(usage?.costUsd).toBe(0.0034);
+	});
+
+	it("parseUsage returns costUsd 0 when streaming usage.cost is zero (free model)", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage?.(makeStreamingResponse(0));
+
+		expect(usage?.costUsd).toBe(0);
+	});
+
+	it("parseUsage returns costUsd undefined when streaming usage.cost is absent", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage?.(makeStreamingResponse(undefined));
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("parseUsage returns costUsd undefined when streaming usage.cost is null", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage?.(makeStreamingResponse(null));
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+
+	it("parseUsage returns costUsd undefined when streaming usage.cost is a string (type confusion)", async () => {
+		const provider = new OpenRouterProvider();
+		const usage = await provider.parseUsage?.(makeStreamingResponse("0.0034"));
+
+		expect(usage?.costUsd).toBeUndefined();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
 // transformRequestBody — CACHE-02: 3-breakpoint per-block injection
 // ─────────────────────────────────────────────────────────────────────────────
 
