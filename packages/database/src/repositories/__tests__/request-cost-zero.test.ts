@@ -70,4 +70,16 @@ describe("RequestRepository zero-cost persistence (D-03)", () => {
 		expect(calls.length).toBe(1);
 		expect(calls[0].params[4]).toBe(null);
 	});
+
+	// Regression: save() ON CONFLICT clause must use COALESCE so a
+	// post-processor worker that passes undefined costUsd does not null
+	// out a real cost already persisted by the live streaming path.
+	it("save() ON CONFLICT uses COALESCE(EXCLUDED.cost_usd, requests.cost_usd)", async () => {
+		const { repo, calls } = createRepoCapturingRun();
+		await repo.save(makeRequestData(0) as any);
+		expect(calls.length).toBe(1);
+		expect(calls[0].sql).toContain(
+			"cost_usd = COALESCE(EXCLUDED.cost_usd, requests.cost_usd)",
+		);
+	});
 });

@@ -84,7 +84,7 @@ export class RequestRepository extends BaseRepository<RequestData> {
 				prompt_tokens = EXCLUDED.prompt_tokens,
 				completion_tokens = EXCLUDED.completion_tokens,
 				total_tokens = EXCLUDED.total_tokens,
-				cost_usd = EXCLUDED.cost_usd,
+				cost_usd = COALESCE(EXCLUDED.cost_usd, requests.cost_usd),
 				input_tokens = EXCLUDED.input_tokens,
 				cache_read_input_tokens = EXCLUDED.cache_read_input_tokens,
 				cache_creation_input_tokens = EXCLUDED.cache_creation_input_tokens,
