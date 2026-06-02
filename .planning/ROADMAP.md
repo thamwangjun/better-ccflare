@@ -45,7 +45,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 
 ### v1.3 OpenRouter Anthropic Messages Provider
 
-- [ ] **Phase 9: Provider Class + Unit Tests** — New `OpenRouterAnthropicProvider` with all four method overrides, TDD-verified
+- [x] **Phase 9: Provider Class + Unit Tests** — New `OpenRouterAnthropicProvider` with all four method overrides, TDD-verified (completed 2026-06-02)
 - [ ] **Phase 10: Type Wiring + CLI + HTTP API + SSE Sniffer** — Mode string propagated through all 11 registration sites; CLI and HTTP API functional; failover and debug logging wired
 - [ ] **Phase 11: Dashboard Wiring** — Add Account form, provider-preference dialog, and API client updated for the new provider type
 - [ ] **Phase 12: Integration Test + Verification** — End-to-end confirmation via a real `:free` model request through the full proxy stack
@@ -68,7 +68,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 **Plans**: 1 plan
 Plans:
 
-- [ ] 09-01-PLAN.md — OpenRouterAnthropicProvider class (four overrides + session_id/usage injection) and its TDD proof suite covering all five success criteria
+- [x] 09-01-PLAN.md — OpenRouterAnthropicProvider class (four overrides + session_id/usage injection) and its TDD proof suite covering all five success criteria
 
 ### Phase 10: Type Wiring + CLI + HTTP API + SSE Sniffer
 
@@ -124,7 +124,7 @@ Plans:
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | ✅ Complete | 2026-05-21 |
 | 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
 | 8. Real Cost Persistence | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
-| 9. Provider Class + Unit Tests | v1.3 | 0/? | Not started | - |
+| 9. Provider Class + Unit Tests | v1.3 | 1/1 | Complete   | 2026-06-02 |
 | 10. Type Wiring + CLI + HTTP API + SSE Sniffer | v1.3 | 0/? | Not started | - |
 | 11. Dashboard Wiring | v1.3 | 0/? | Not started | - |
 | 12. Integration Test + Verification | v1.3 | 0/? | Not started | - |
