@@ -1,131 +1,220 @@
-# Features Research — v1.1
+# Feature Research — v1.3 OpenRouter Anthropic Messages Provider
 
-**Project:** better-ccflare (personal fork)
-**Researched:** 2026-05-05
-**Overall confidence:** HIGH (Anthropic API), MEDIUM (OpenRouter provider preference)
-
----
-
-## Summary
-
-Three features extend the existing OpenRouter cache injection in `openrouter/provider.ts`. Feature 1 adds a 4th cache breakpoint targeting the last high-token user message in `messages[]`, reaching the Anthropic API maximum. Feature 2 upgrades selected cache blocks from the default 5-minute TTL to a 1-hour TTL using the `ttl: "1h"` field on the `cache_control` object — critical for agentic sessions where turns exceed 5 minutes. Feature 3 adds a `provider_order` column to the `accounts` table and injects `provider.order` into every OpenRouter request during `transformRequestBody`, with an ENV var seeding it at startup and a Dashboard UI field for changing it at runtime.
-
-The three features are additive and non-conflicting, but Feature 2 (1hr TTL) has a strict Anthropic ordering constraint — 1hr TTL blocks must appear before 5-minute TTL blocks in the prompt — that interacts directly with the breakpoint injection order established by Feature 1.
+**Domain:** New provider/account type for a Bun-based Claude API load-balancer proxy
+**Researched:** 2026-06-02
+**Confidence:** HIGH (OpenRouter endpoint schema, caching behavior, provider routing fields); MEDIUM (native Anthropic usage field names on the Messages endpoint — field names confirmed via Anthropic native format cross-reference, but direct JSON schema from OpenRouter /api/v1/messages usage object was not fully extractable from documentation); LOW (cost field on native streaming — extrapolated from v1.2 behavior patterns)
 
 ---
 
-## Feature 1: Extended Cache Breakpoints
+## Context: What v1.3 Adds
 
-**Current state:** `transformRequestBody` injects 3 breakpoints — last tool in `tools[]`, last system block in `system`, last content block of last assistant turn in `messages[]`.
+This is a new account/provider type (`openrouter-anthropic`) that routes to `POST https://openrouter.ai/api/v1/messages` using `Authorization: Bearer <key>` auth. Unlike the existing `openrouter` provider (which translates Anthropic Messages → OpenAI Chat Completions → back), this new type is a true passthrough: Claude Code's native Anthropic Messages requests arrive verbatim at OpenRouter's Anthropic-native endpoint.
 
-**Table stakes (minimum for correct behavior):**
-- Identify the last `messages[]` entry with `role: "user"` that has substantial content.
-- Inject `cache_control: { type: "ephemeral" }` on the last content block of that user message.
-- Maintain injection order: tools → system → user message → assistant turn. Anthropic processes breakpoints in document order and caches from the start of the prompt up to each breakpoint.
+The new provider extends `AnthropicCompatibleProvider` (which extends `BaseAnthropicCompatibleProvider`). It coexists with the existing `openrouter` provider, which is left unchanged.
 
-**Anthropic API specifics (HIGH confidence — official Anthropic docs):**
-- Hard limit is 4 cache breakpoints per request. If more than 4 are present, Anthropic silently uses only the 4 most recent (from back to front). There is no 400 error — the extra breakpoints are silently discarded.
-- Minimum cacheable token threshold varies by model: 1,024 tokens for Claude Sonnet 3.x; 2,048 for Sonnet 4.6 and Haiku 3.5; 4,096 for Opus 4.x and Haiku 4.5. A breakpoint on a block under the threshold is silently ignored — no error, no cache write.
-- OpenRouter passes `cache_control` blocks through to Anthropic unchanged (HIGH confidence — OpenRouter docs confirm pass-through for explicit per-block breakpoints across Anthropic, Bedrock, and Vertex routing paths).
-
-**Edge cases:**
-- **Short user messages:** A short clarifying question ("ok, proceed") injected as a 4th breakpoint wastes the slot — Anthropic silently ignores it (below token threshold) but the breakpoint slot is still consumed, meaning a longer earlier user message that would have qualified gets skipped by the silent back-to-front selection. Mitigation: only inject the 4th breakpoint if the target user message content exceeds a rough character-count heuristic (e.g., >500 chars equates to ~125 tokens minimum). No SDK token counter is needed — a character estimate is sufficient as a guard.
-- **No eligible user message:** If `messages[]` contains only assistant turns (pathological case) or a single short user message below threshold, skip the 4th breakpoint injection. The slot is better left unused.
-- **String vs array content:** The existing assistant-turn code already handles string-to-array conversion. The same pattern applies to user messages: convert string content to `[{ type: "text", text: ..., cache_control: ... }]`.
-- **4th breakpoint + existing 3 equals exactly 4:** This is the target state. No silent truncation occurs in normal use.
-- **Image content blocks in user messages:** `cache_control` can be placed on image blocks. The implementation should target the last content block of the user message regardless of type, consistent with the existing assistant-turn logic.
-- **Injection order relative to existing 3 breakpoints:** The 4th breakpoint (user message) must be inserted between breakpoint 2 (system) and breakpoint 3 (last assistant). In document order: tools → system → **user message** → last assistant. The current `transformRequestBody` method injects tools first, then system, then assistant — the user message breakpoint must be injected between system and assistant in the same method body.
+Four fork features from previous milestones must carry over:
+1. **Cost tracking** — persist real USD cost to `requests.cost_usd`
+2. **Provider preference injection** — reuse existing `openrouter_provider_preference` column/type chain
+3. **Native cache_control passthrough** — no breakpoint-injection needed (passthrough is sufficient)
+4. **Dashboard provider-order dialog** — gate on the new provider type in addition to existing `openrouter`
 
 ---
 
-## Feature 2: 1-Hour TTL Cache Blocks
+## Feature Landscape
 
-**Current state:** All injected breakpoints use `{ type: "ephemeral" }` which defaults to 5-minute TTL.
+### Table Stakes (Users Expect These)
 
-**Table stakes (minimum for correct behavior):**
-- Add `ttl: "1h"` to the `cache_control` object for stable breakpoints: `{ type: "ephemeral", ttl: "1h" }`.
-- Apply 1hr TTL only to breakpoints 1 (tools) and 2 (system prompt) — content that does not change between turns.
-- Keep 5-minute TTL on breakpoints 3 (user message) and 4 (last assistant turn) — content that changes every turn and whose cache entry is invalidated by the next message regardless of TTL.
+Features a usable provider must have. Missing these = provider is broken or incomplete.
 
-**Anthropic API specifics (HIGH confidence — official Anthropic docs, confirmed by OpenRouter caching docs):**
-- TTL field is `"ttl"` with values `"5m"` (default, equivalent to omitting the field) or `"1h"`.
-- Cache read cost is identical for both TTLs: 0.1x base input tokens (90% discount).
-- Cache write cost differs: `"5m"` = 1.25x input tokens (25% premium), `"1h"` = 2x input tokens (100% premium). The higher write cost for tools and system prompt is offset by avoiding repeated cache writes across turns.
-- **Ordering constraint (CRITICAL — enforced by Anthropic API):** Within a single request, 1hr TTL blocks must appear before 5-minute TTL blocks in document order. Violating this returns a 400 error from Anthropic. OpenRouter propagates this 400 to the client unchanged.
-- Both TTL types count against the 4-breakpoint limit equally.
-- OpenRouter confirms support for both TTL values with pass-through behavior for Anthropic-routed requests.
+| Feature | Why Expected | Complexity | Notes |
+|---------|--------------|------------|-------|
+| **Correct endpoint routing** | Without it the provider does nothing | LOW | `https://openrouter.ai/api/v1/messages`, `Authorization: Bearer`, strip `/v1` prefix deduplication already in `AnthropicCompatibleProvider.buildUrl()` — need to override `buildUrl()` and `getEndpoint()` as `OpenRouterProvider` does, but pointing to `/api/v1/messages` base |
+| **API key auth (Bearer)** | OpenRouter uses Bearer, not x-api-key | LOW | `authHeader: "authorization"`, `authType: "bearer"` — same as existing `OpenRouterProvider`; `BaseAnthropicCompatibleProvider.prepareHeaders()` already handles this pattern |
+| **Verbatim request passthrough** | The whole value prop of native endpoint | LOW | `transformRequestBody` does model mapping via super; no further transformation needed — `cache_control` blocks from Claude Code pass through untouched |
+| **Cost tracking from `usage.cost`** | Without it `requests.cost_usd` stays null | MEDIUM | The native Anthropic Messages endpoint returns a usage object with native field names (`input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`) PLUS OpenRouter's added `cost` field (USD). The `cost` field was already confirmed in the existing `OpenRouterProvider.extractUsageInfo()` for the OpenAI endpoint — same pattern applies here. Override `extractUsageInfo` + `extractStreamingUsage` + `parseUsage` mirroring the existing `OpenRouterProvider` implementation, but reading native Anthropic field names instead of `prompt_tokens_details.*` |
+| **Native cache token field names** | Base class reads `cache_creation_input_tokens` / `cache_read_input_tokens` — these are the correct native field names | LOW | Unlike the OpenAI-format OpenRouter provider (which required `prompt_tokens_details.cache_write_tokens` / `cached_tokens`), the native endpoint returns standard Anthropic field names. `BaseAnthropicCompatibleProvider.extractUsageInfo()` already reads these correctly. The only override needed is to also capture `usage.cost` |
+| **Provider preference injection** | Power users expect the same routing controls as the existing OpenRouter account | MEDIUM | Reuse existing `openrouter_provider_preference` column (already in DB schema, types, repository). Inject `body.provider = { order, allow_fallbacks }` in `transformRequestBody` using the same `"provider" in body` guard pattern. The native endpoint accepts the `provider` routing object directly in the request body |
+| **Dashboard provider-order dialog** | Without it, stored preferences cannot be managed | LOW | Gate the existing `AccountOpenrouterProviderPreferenceDialog` on `account.provider === "openrouter" \|\| account.provider === "openrouter-anthropic"`. One-line change in the dialog visibility condition |
+| **Model string pass-through** | Claude Code sends `claude-sonnet-4-5` etc.; OpenRouter needs `anthropic/claude-sonnet-4-5` | LOW-MEDIUM | OpenRouter's Anthropic Messages endpoint accepts both bare Anthropic model IDs (e.g., `claude-sonnet-4-5`) and prefixed slugs (e.g., `anthropic/claude-sonnet-4-5`). The base `transformRequestBody` model mapping via `mapModelName` handles existing account-level model overrides. No additional transformation required unless the user has set an explicit model mapping |
+| **Rate limit header parsing** | Without it the load balancer cannot detect rate limits | LOW | `BaseAnthropicCompatibleProvider.parseRateLimit()` already reads `anthropic-ratelimit-unified-*` headers — these are the same headers Anthropic sends natively, which OpenRouter proxies through on the native endpoint |
+| **Streaming support** | Claude Code always streams | LOW | Native endpoint is SSE format identical to Anthropic's own (`message_start` / `content_block_delta` / `message_delta` / `message_stop`). `BaseAnthropicCompatibleProvider.extractStreamingUsage()` already handles this format |
 
-**When to use 1hr vs 5min:**
-- Tools (`body.tools`) and system prompt (`body.system`) do not change across turns in a Claude Code or agentic session. The 1hr TTL ensures the cache remains warm even when a user pauses between turns for more than 5 minutes. The 2x write premium is justified by the elimination of repeat cache writes on every request.
-- Last user message and last assistant turn are invalidated on every new turn — their cache lifetime is bounded by the conversation turn, not by any TTL. Using 1hr TTL for them wastes the 2x write premium.
+### Differentiators (Competitive Advantage)
 
-**Edge cases:**
-- **Provider switch mid-session:** If a subsequent request routes to a different OpenRouter account, the prior backend's cache is cold. The 1hr TTL guarantees warmth on the specific backend for 1 hour, but backend identity across accounts is not guaranteed by OpenRouter unless `provider.order` is also set (Feature 3 dependency). Without Feature 3, the 1hr TTL benefit is probabilistic for multi-account sessions.
-- **Bedrock and Vertex AI routing via OpenRouter:** Explicit per-block breakpoints work across Anthropic, Bedrock, and Vertex AI routing paths through OpenRouter. However, `ttl: "1h"` is an Anthropic-specific feature. Bedrock and Vertex may not support the 1hr TTL parameter and may return an error or silently ignore it. LOW confidence on exact behavior — needs empirical verification. Safe mitigation: only inject `ttl: "1h"` for `anthropic/*` model prefixes, and fall back to `"5m"` (omit the `ttl` field) for Bedrock/Vertex models. This is a low-risk decision — the existing breakpoints already work for all model prefixes.
-- **Minimum token threshold still applies for 1hr blocks.** A 1hr block under threshold is silently ignored (wasting the 2x write premium and consuming the breakpoint slot). The tools and system prompt breakpoints in agentic sessions nearly always exceed threshold, so this is low-risk in practice.
+Features that unlock native-only capabilities unavailable through the OpenAI-format provider.
 
-**Interaction with Feature 1 (ordering constraint):**
-The recommended injection order (tools 1hr → system 1hr → user message 5min → last assistant 5min) satisfies the Anthropic ordering constraint (1hr before 5min). This constraint is naturally satisfied by the document order of the prompt and requires no explicit sequencing logic beyond maintaining the current injection order and assigning TTL by breakpoint position.
+| Feature | Value Proposition | Complexity | Notes |
+|---------|-------------------|------------|-------|
+| **`session_id` injection** | Routes all turns of one Claude Code session to the same OpenRouter backend, maximizing Anthropic prompt cache hits from turn 1 (not just after first observed cache hit) | MEDIUM | OpenRouter-specific extension field in request body. Claude Code does not send `session_id`. The proxy can inject a stable per-connection or per-account session identifier. Without `session_id`, sticky routing only activates after a cache hit is observed; with it, sticky routing activates from the first request in the session. Implementation: extract a stable session token from the incoming request (e.g., hash of account + connection) and inject as `body.session_id` if not already present |
+| **`openrouter_metadata` routing visibility** | Surfaces which backend served each request for debugging routing/caching issues | LOW | Opt-in via `X-OpenRouter-Experimental-Metadata: enabled` header. For streaming responses, `openrouter_metadata` arrives in the terminal `message_stop` event. Useful for debugging but not critical. Can be surfaced in debug logs without client-visible changes |
+| **Extended provider routing fields** | Full `provider` object supports `sort` (price/throughput/latency), `data_collection` (deny), `zdr` (Zero Data Retention), `require_parameters`, `max_price`, `quantizations` | HIGH | Current `openrouter_provider_preference` stores only `{order, allow_fallbacks}`. Supporting `sort`, `zdr`, `data_collection` etc. would require a schema migration and UI expansion. Defer to future milestone — the existing JSON object storage format is forward-compatible |
+| **`thinking` passthrough** | Claude Code's extended thinking requests pass through natively without shape transformation errors | LOW | The native endpoint supports the full `thinking` object (`enabled`/`disabled`/`adaptive`). The OpenAI-format provider cannot represent this without transformation. For the passthrough provider, no action needed — Claude Code's `thinking` blocks pass through verbatim |
+| **`output_config.format` (structured outputs)** | Structured JSON output requests from Claude Code pass through without shape issues | LOW | `output_config.format` with `json_schema` is a native endpoint extension. OpenRouter auto-applies the `anthropic-beta: structured-outputs-2024-10-22` header when routing to Anthropic (does NOT require `strict: true` on the proxy side). No implementation needed — passthrough handles it |
+| **`context_management.edits` passthrough** | Context compression and tool-use clearing requests pass through natively | LOW | `context_management.edits` (`clear_tool_uses_20250919`, `clear_thinking_20251015`, `compact_20260112`) are native endpoint extensions. Passthrough handles these automatically — no proxy logic needed |
+| **Top-level automatic caching** | Single `cache_control` field at request root triggers OpenRouter's automatic breakpoint placement, currently only supported when routing to the direct Anthropic provider | LOW | The existing `openrouter` provider's per-block `cache_control` injection is bypassed on the new provider (passthrough). Claude Code may already send top-level `cache_control` in some configurations. The new provider passes it through; the constraint (routes only to direct Anthropic, excludes Bedrock/Vertex) is enforced by OpenRouter transparently |
 
----
+### Anti-Features (Avoid)
 
-## Feature 3: Per-Account OpenRouter Provider Preference
-
-**Current state:** No `provider.order` is injected. OpenRouter uses its own load balancing across all available backends for the requested model.
-
-**Table stakes (minimum for correct behavior):**
-- Add a `provider_order` TEXT column to the `accounts` table (following the established pattern of `model_mappings` and `model_fallbacks` — stored as JSON array string, parsed at use time). Migration: `ALTER TABLE accounts ADD COLUMN provider_order TEXT`.
-- Add `provider_order: string | null` to `AccountRow` and `Account` interfaces in `packages/types/src/account.ts` and wire through `toAccount()`.
-- In `transformRequestBody` in `openrouter/provider.ts`, when `account?.provider_order` is non-null and parses to a non-empty array, merge `{ provider: { order: [...] } }` into the outgoing request body after the cache injection block.
-- Allow the value to be seeded via ENV var at startup (e.g., `BETTER_CCFLARE_OR_PROVIDER_ORDER_<ACCOUNT_NAME>=anthropic,together`). The startup code parses the env var, converts comma-separated string to JSON array, and persists to DB if not already set.
-- Expose a text input field in the Dashboard UI Account settings panel for editing the provider order as a comma-separated list, with save wired to the existing account update API endpoint.
-
-**OpenRouter API specifics (HIGH confidence — official OpenRouter docs):**
-- The request body field is `provider.order` — a JSON array of provider slug strings, e.g., `["anthropic", "together"]`.
-- Provider slugs are OpenRouter's internal identifiers. Examples: `"anthropic"`, `"together"`, `"fireworks"`, `"aws-bedrock"`, `"google-vertex"`. These are distinct from better-ccflare account provider names.
-- With `order` set, OpenRouter disables its default load balancing and attempts providers sequentially.
-- Default `allow_fallbacks: true` means if the first provider fails or is unavailable, OpenRouter tries the next in order, then falls back to any available provider. This default is correct for this use case.
-- The `provider` object is a top-level field in the OpenRouter request body alongside `model`, `messages`, and `max_tokens`.
-
-**Differentiators (useful but not required for v1.1):**
-- Dashboard UI validation that entered provider slugs are valid OpenRouter slugs. LOW priority — OpenRouter returns a clear error message on invalid slugs, and valid slugs can be discovered at https://openrouter.ai/docs.
-- Per-model override within one account (different `provider.order` for `claude-opus-4` vs `claude-sonnet-4-5`). Significant added complexity — requires a map structure instead of a flat array, a richer DB schema, and a more complex UI. Defer to future milestone.
-
-**Anti-features (explicitly excluded):**
-- `provider.only` — eliminates OpenRouter's fallback entirely; causes hard failures when the preferred provider is down. PROJECT.md explicitly excludes this. Always use `provider.order` with fallbacks enabled.
-- Per-request provider override via request header (e.g., `x-better-ccflare-openrouter-provider`) — deferred to a future milestone per PROJECT.md. Do not add this in v1.1.
-- Auto-detecting optimal provider per model — no OpenRouter API for real-time per-provider-per-model status; not feasible.
-
-**Edge cases:**
-- **Provider unavailable:** With `allow_fallbacks: true` (the default; do not override), OpenRouter falls back gracefully. The injection must never include `allow_fallbacks: false`.
-- **Non-OpenRouter accounts:** The injection must be gated on `account.provider === "openrouter"`. Anthropic-native, Bedrock, and other provider accounts do not accept the `provider` field and may return 400 errors. The gate is already natural — `transformRequestBody` is only called for the OpenRouter provider.
-- **Null or empty `provider_order`:** If the column is null or parses to an empty array, skip injection and return to OpenRouter's default load balancing. This is the correct default for accounts without routing preference.
-- **BYOK (Bring Your Own Key) on OpenRouter:** OpenRouter prioritizes BYOK endpoints before the `provider.order` list regardless of ordering. This is an OpenRouter platform behavior outside our control. LOW confidence on whether typical users of this proxy configure BYOK on their OpenRouter account. Treat as a known limitation, not a blocker.
-- **Multiple OpenRouter accounts with different `provider_order`:** `SessionStrategy` selects the account; `transformRequestBody` receives the selected `account` object. Each account's `provider_order` is injected independently after selection. Two accounts with different values will correctly inject their respective preferences — no shared state issue.
-- **Cache interaction:** When `provider.order` routes primarily to `"anthropic"`, OpenRouter forwards to Anthropic's native API. Cache injection (Features 1 and 2) is fully effective in this path. When routing to Bedrock or Vertex, 1hr TTL behavior may differ (see Feature 2 edge cases) — this is the primary interaction risk between Feature 3 and Feature 2.
+| Feature | Why Requested | Why Problematic | Alternative |
+|---------|---------------|-----------------|-------------|
+| **`cache_control` breakpoint injection** | Existing `openrouter` provider does it | Redundant on the native endpoint — Claude Code already sends `cache_control` blocks correctly. Injecting additional breakpoints on top of Claude Code's own would exceed the 4-breakpoint limit. The 4-breakpoint injection was a workaround for the OpenAI-format translation that stripped `cache_control` | Pure passthrough; zero injection |
+| **`provider.only`** | Eliminates routing uncertainty | Removes all fallback — causes hard failures when the preferred provider is down | Always use `provider.order` with `allow_fallbacks: true` (same decision as v1.1, applies equally here) |
+| **`plugins` injection** | Web search, context compression etc. are useful | Plugins alter the request/response shape in ways Claude Code doesn't expect (e.g., `web` plugin adds tool use rounds, `context-compression` truncates messages). Proxy-side plugin injection would break Claude Code's context management | Leave `plugins` as client-controlled; do not inject |
+| **Model prefix normalization (`anthropic/` prefix stripping)** | Some clients send `anthropic/claude-...` | OpenRouter's native endpoint accepts both bare (`claude-sonnet-4-5`) and prefixed (`anthropic/claude-sonnet-4-5`) model IDs. Stripping/normalizing creates risk of model misidentification | Trust the model string from Claude Code; let OpenRouter handle both formats |
+| **Per-provider `cache_control` TTL upgrade** | 1hr TTL gives better cache persistence | The TTL upgrade logic in `proxy.ts` (`SYSTEM_PROMPT_CACHE_TTL_1H`) already applies to ALL Anthropic-compatible responses via `injectSystemCacheTtl()` — not a provider-specific concern. Adding duplicate TTL injection in the new provider would conflict | Let existing `injectSystemCacheTtl()` in `proxy.ts` handle TTL upgrades as before |
+| **Dual-account automatic failover** | If OpenRouter native endpoint is down, fall back to OpenAI-format provider | The load balancer already handles multi-account failover. Having one account of each type and letting the load balancer fail over is the correct approach — do not build cross-provider-type fallback inside a single account | Users add both `openrouter` and `openrouter-anthropic` accounts; SessionStrategy handles failover |
 
 ---
 
-## Feature Interactions
+## Feature Dependencies
 
-**Feature 1 + Feature 2 (breakpoints + TTL):** The recommended TTL assignment by breakpoint position (tools 1hr, system 1hr, user message 5min, last assistant 5min) satisfies the Anthropic ordering constraint (1hr before 5min) naturally, since document order mirrors breakpoint position order. No explicit sequencing logic is needed beyond maintaining the current injection order. Implement Feature 1 and Feature 2 together in the same code change — they share the same `transformRequestBody` method and the TTL field is simply an additional key on the `cache_control` object.
+```
+[Correct endpoint routing + Bearer auth]
+    └──required by──> [All other features]
 
-**Feature 2 + Feature 3 (1hr TTL + provider preference):** The 1hr TTL benefit is maximized when the same backend processes all turns of an agentic session. Without provider preference, OpenRouter may route different turns to different Anthropic-compatible backends, making the cache cold on each new backend. Setting `provider_order: ["anthropic"]` on an OpenRouter account makes the 1hr TTL fully effective — each turn hits the same Anthropic-native backend where the cache was written. Feature 3 amplifies Feature 2's value for agentic use cases.
+[Cost tracking from usage.cost]
+    └──requires──> [extractUsageInfo override (non-streaming)]
+    └──requires──> [extractStreamingUsage override (streaming)]
+    └──requires──> [parseUsage override (streaming dispatch)]
+    └──depends on──> [v1.2 cost chain] (already ships: AsyncDbWriter, resolveCostUsd, COALESCE ON CONFLICT)
 
-**Feature 1 + Feature 3 (4th breakpoint + provider preference):** No direct interaction. The 4th breakpoint is structural (what gets cached); provider preference is routing (where it gets cached). They compose without conflict.
+[Provider preference injection]
+    └──requires──> [openrouter_provider_preference column] (already ships from v1.1)
+    └──requires──> [Account type includes provider === "openrouter-anthropic"]
 
-**All three + existing v1.0 patches:** The existing 3-breakpoint injection and `cache_write_tokens` extraction are unaffected. Features 1 and 2 extend `transformRequestBody` in `openrouter/provider.ts` (same file, same method, same `// FORK PATCH:` annotation pattern). Feature 3 adds a new injection step at the end of `transformRequestBody` after the cache breakpoint logic. The `// FORK PATCH:` annotation must cover all three additions to maintain upstream merge safety per the v1.0 SOP.
+[Dashboard dialog extension]
+    └──requires──> [Provider preference injection] (dialog controls the preference)
+    └──requires──> [Account.provider === "openrouter-anthropic" recognized by UI]
 
-**Regression test surface:** The existing 10-test suite covers cache injection and usage extraction. New tests required: (a) 4th breakpoint injected on last high-token user message; (b) 4th breakpoint skipped when user message content is below threshold; (c) `ttl: "1h"` present on tools and system blocks; (d) `ttl` absent (or `"5m"`) on user message and assistant blocks; (e) `provider.order` injected when `account.provider_order` is non-null; (f) no `provider.order` injection when field is null; (g) no injection for non-OpenRouter accounts.
+[session_id injection] (differentiator)
+    └──requires──> [Correct endpoint routing]
+    └──enhances──> [Provider preference injection] (session_id + provider.order = maximum cache stickiness)
+```
+
+### Dependency Notes
+
+- **Cost tracking requires the full v1.2 chain:** `resolveCostUsd`, `providerCostUsd` threading in the post-processor worker, COALESCE in `save()` ON CONFLICT — all already shipped. The new provider only needs to surface `costUsd` from `extractUsageInfo`/`extractStreamingUsage`; the downstream persistence path is unchanged.
+- **Provider preference injection depends on v1.1 schema:** The `openrouter_provider_preference` column (TEXT, JSON), `AccountRow` and `Account` type fields, repository read/write, and PUT/DELETE endpoints are all already in place. The new provider only needs to read the existing field in `transformRequestBody`.
+- **Dashboard dialog is a gate change only:** The existing `AccountOpenrouterProviderPreferenceDialog` component needs the `account.provider` check widened. No new API endpoints or state management required.
+- **Native cache field names align with base class:** `BaseAnthropicCompatibleProvider.extractUsageInfo()` already reads `cache_creation_input_tokens` and `cache_read_input_tokens` from `json.usage`. The native endpoint returns these exact field names. The only delta from the base class behavior is capturing `usage.cost` — identical to the existing `OpenRouterProvider` override but without the `prompt_tokens_details` translation.
+
+---
+
+## Caching Behavior on the Native Endpoint (Research Findings)
+
+**How `cache_control` works (HIGH confidence — OpenRouter docs):**
+
+Two modes exist on the native endpoint:
+
+1. **Explicit per-block breakpoints:** `cache_control` placed on individual content blocks (tools, system, messages). Hard limit of 4 breakpoints. Works across Anthropic, Bedrock, and Vertex routing. Claude Code already sends these — the passthrough provider requires zero injection.
+
+2. **Automatic top-level caching:** A single `cache_control` at the request root; OpenRouter automatically advances the breakpoint to the last cacheable block as conversations grow. Only supported when routing to the direct Anthropic provider (Bedrock and Vertex excluded when this is present).
+
+**TTL values:** `{ type: "ephemeral" }` = 5-minute default; `{ type: "ephemeral", ttl: "1h" }` = 1-hour. Cache write cost: 5-min = 1.25x base input; 1-hr = 2x base input. Cache read cost: 0.1x base input for both. The proxy's existing `injectSystemCacheTtl()` in `proxy.ts` handles TTL upgrades — no new logic needed in the provider.
+
+**Sticky routing:** After a cache hit, OpenRouter remembers the backend and routes subsequent requests for the same model to the same provider. With `session_id` set, sticky routing activates from the first request (not just after first cache hit). This is the key differentiator of `session_id` injection.
+
+**OpenRouter response-cache behavior:** On an OpenRouter layer cache hit (identical request), `usage.input_tokens` and `usage.output_tokens` are zeroed on the native endpoint. `usage.cost` is also effectively 0 (cache hits are free). The proxy handles this correctly — `?? null` semantics in the cost writer preserve a genuine `$0` rather than collapsing it to `null`.
+
+**Usage object field names on native endpoint (MEDIUM confidence — cross-referenced from Anthropic native format + OpenRouter docs):**
+
+The native Anthropic Messages endpoint returns:
+```
+usage: {
+  input_tokens: number,           // non-cached input tokens
+  output_tokens: number,          // completion tokens
+  cache_creation_input_tokens: number,   // tokens written to cache (Anthropic naming)
+  cache_read_input_tokens: number,       // tokens read from cache (Anthropic naming)
+  cost: number,                   // OpenRouter-added USD cost field (as in existing provider)
+  service_tier: string            // returned inside usage on Messages endpoint (not top-level)
+}
+```
+
+This is the native Anthropic field naming — different from the OpenAI-format endpoint which uses `prompt_tokens_details.cache_write_tokens` / `prompt_tokens_details.cached_tokens`. The base class `extractUsageInfo` reads `cache_creation_input_tokens` and `cache_read_input_tokens` correctly. The override only needs to additionally capture `cost`.
+
+**Important note on recent change:** As of early 2026, OpenRouter now always includes the full usage object (including cache write tokens) in every response. `include_usage: true` is deprecated and has no effect. The prior gap (only cache read tokens returned, not write tokens) no longer applies.
+
+---
+
+## Provider Routing Behavior (HIGH confidence — OpenRouter docs)
+
+The `provider` object in the request body maps directly to `openrouter_provider_preference`. Fields confirmed:
+
+| Field | Type | Default | Maps to existing preference |
+|-------|------|---------|----------------------------|
+| `order` | `string[]` | — | `openrouter_provider_preference.order` |
+| `allow_fallbacks` | `boolean` | `true` | `openrouter_provider_preference.allow_fallbacks` |
+| `require_parameters` | `boolean` | `false` | not stored (future) |
+| `data_collection` | `"allow"\|"deny"` | `"allow"` | not stored (future) |
+| `zdr` | `boolean` | — | not stored (future) |
+| `only` | `string[]` | — | explicitly out-of-scope |
+| `ignore` | `string[]` | — | not stored (future) |
+| `sort` | `string\|object` | — | not stored (future) |
+| `max_price` | `object` | — | not stored (future) |
+| `quantizations` | `string[]` | — | not stored (future) |
+| `preferred_min_throughput` | `number\|object` | — | not stored (future) |
+| `preferred_max_latency` | `number\|object` | — | not stored (future) |
+
+The injection guard `!("provider" in body)` (already in `OpenRouterProvider`) is correct — it preserves explicit `body.provider = {}` from the client.
+
+**Provider slugs for `order`:** `"Anthropic"`, `"AWS Bedrock"`, `"Google Vertex"`, `"Together"`, `"Fireworks"` etc. — OpenRouter's display names or internal slugs. These are user-supplied; the proxy stores and injects verbatim.
+
+---
+
+## MVP Definition (v1.3)
+
+### Launch With
+
+- [ ] New `openrouter-anthropic` provider class extending `AnthropicCompatibleProvider`, pointing at `https://openrouter.ai/api/v1/messages` with Bearer auth — **passthrough, no body transformation beyond model mapping**
+- [ ] Register `openrouter-anthropic` in the provider registry and `accounts` table `mode` enum
+- [ ] `extractUsageInfo` override: read `usage.input_tokens`, `usage.output_tokens`, `usage.cache_creation_input_tokens`, `usage.cache_read_input_tokens`, `usage.cost` (typeof-guarded) — mirrors base class for token fields, adds `costUsd` from `cost`
+- [ ] `extractStreamingUsage` + `parseUsage` overrides for live streaming cost — same clone-before-super pattern as existing `OpenRouterProvider`
+- [ ] Provider preference injection in `transformRequestBody` — read `account.openrouter_provider_preference`, inject `body.provider = { order, allow_fallbacks }` using `"provider" in body` guard
+- [ ] Dashboard dialog gate widened to `account.provider === "openrouter" || account.provider === "openrouter-anthropic"`
+- [ ] CLI `--add-account` mode string `openrouter-anthropic` registered
+
+### Add After Validation (v1.3.x)
+
+- [ ] `session_id` injection — stable per-session identifier derived from connection/account context; adds significant cache warmth improvement for agentic sessions
+- [ ] `openrouter_metadata` logging — opt-in debug visibility into routing decisions
+
+### Future Consideration (v2+)
+
+- [ ] Extended `provider` routing fields in `openrouter_provider_preference` schema (`sort`, `data_collection`, `zdr`, `max_price`) — requires schema migration, UI expansion, type changes
+- [ ] Per-request OpenRouter provider selection via `x-better-ccflare-openrouter-provider` header — deferred from v1.1, applies equally to `openrouter-anthropic`
+
+---
+
+## Feature Prioritization Matrix
+
+| Feature | User Value | Implementation Cost | Priority |
+|---------|------------|---------------------|----------|
+| Endpoint routing + Bearer auth | HIGH | LOW | P1 |
+| Verbatim passthrough | HIGH | LOW | P1 |
+| Cost tracking (extractUsageInfo + streaming) | HIGH | MEDIUM | P1 |
+| Provider preference injection | HIGH | LOW | P1 |
+| Dashboard dialog gate extension | MEDIUM | LOW | P1 |
+| CLI mode registration | HIGH | LOW | P1 |
+| `session_id` injection | MEDIUM | MEDIUM | P2 |
+| `openrouter_metadata` logging | LOW | LOW | P2 |
+| Extended provider routing fields | LOW | HIGH | P3 |
+| Per-request provider selection header | LOW | MEDIUM | P3 |
 
 ---
 
 ## Sources
 
-- Anthropic prompt caching API (HIGH confidence): https://platform.claude.com/docs/en/build-with-claude/prompt-caching
-- OpenRouter provider selection (HIGH confidence): https://openrouter.ai/docs/guides/routing/provider-selection
-- OpenRouter prompt caching guide (HIGH confidence): https://openrouter.ai/docs/guides/best-practices/prompt-caching
-- OpenRouter presets (MEDIUM confidence): https://openrouter.ai/docs/guides/features/presets
-- Current codebase — `packages/providers/src/providers/openrouter/provider.ts` (v1.0 3-breakpoint injection)
-- Current codebase — `packages/types/src/account.ts` (Account interface, model_mappings/model_fallbacks pattern)
-- Current codebase — `packages/database/src/migrations.ts` (ALTER TABLE pattern for adding JSON TEXT columns)
+- OpenRouter Anthropic Messages API schema: https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-messages (HIGH confidence — fetched directly; response usage schema truncated but extensions confirmed)
+- OpenRouter prompt caching guide: https://openrouter.ai/docs/guides/best-practices/prompt-caching (HIGH confidence — fetched directly)
+- OpenRouter provider routing: https://openrouter.ai/docs/guides/routing/provider-selection (HIGH confidence — fetched directly; field table confirmed)
+- OpenRouter response caching: https://openrouter.ai/docs/guides/features/response-caching (HIGH confidence — fetched directly; Anthropic Messages endpoint zeroes `input_tokens`/`output_tokens` on cache hit confirmed)
+- OpenRouter router metadata: https://openrouter.ai/docs/guides/features/router-metadata (HIGH confidence — fetched directly; `openrouter_metadata` structure, streaming delivery in `message_stop` confirmed)
+- OpenRouter Claude Code integration guide: https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration (MEDIUM confidence — fetched directly; confirms native Anthropic Messages passthrough pattern)
+- Community analysis of OpenRouter cache write token reporting change: https://www.proredcat.xyz/blog/openrouter-cache-write-calculation (MEDIUM confidence — external blog, corroborated by WebSearch findings re: early 2026 change)
+- Existing codebase — `packages/providers/src/providers/openrouter/provider.ts` — v1.2 cost extraction pattern, cache injection, provider preference injection (HIGH confidence — direct read)
+- Existing codebase — `packages/providers/src/providers/base-anthropic-compatible.ts` — base `extractUsageInfo` reading `cache_creation_input_tokens`/`cache_read_input_tokens`, streaming SSE parsing (HIGH confidence — direct read)
+- Existing codebase — `packages/providers/src/providers/anthropic-compatible/provider.ts` — `buildUrl` deduplication pattern to mirror (HIGH confidence — direct read)
+
+---
+*Feature research for: v1.3 OpenRouter Anthropic Messages Provider*
+*Researched: 2026-06-02*

@@ -1,109 +1,223 @@
-# Research Summary — better-ccflare Fork
+# Project Research Summary
 
-## Recommended Stack / Approach
+**Project:** better-ccflare personal fork — v1.3 OpenRouter Anthropic Messages Provider
+**Domain:** New provider/account type for a Bun-based Claude API load-balancer proxy
+**Researched:** 2026-06-02
+**Confidence:** HIGH
 
-The codebase's existing patterns are correct and no architectural changes are needed for either feature. Provider-specific logic stays in `OpenRouterProvider.transformRequestBody()`, the subclass override chain handles model mapping via `super.transformRequestBody()`, and tests live in `__tests__/provider.test.ts` against Request/response objects directly.
+## Executive Summary
 
-For prompt caching: move from top-level `cache_control` injection to per-block `cache_control` placed on the last system message content block, gated on `anthropic/*` model prefix. This is the only form that works across all OpenRouter provider routes including Bedrock and Vertex.
+v1.3 adds a single new account/provider type (`openrouter-anthropic`) that routes Claude Code's native Anthropic Messages requests to OpenRouter's native `/api/v1/messages` endpoint. Unlike the existing `openrouter` provider — which translates Anthropic Messages to OpenAI Chat Completions and back — this new type is a true passthrough: request bodies arrive at OpenRouter verbatim, preserving `cache_control` blocks, `thinking` config, `context_management.edits`, and all other native-Anthropic fields without shape transformation. The infrastructure for this is almost entirely already in place from v1.1–v1.2: the DB column for provider preferences, the cost chain (`resolveCostUsd`, COALESCE ON CONFLICT), and the SSE streaming infrastructure all carry forward without modification. The implementation is bounded: one new class in `packages/providers/`, four overrides, and a propagation of the `"openrouter-anthropic"` mode string through eleven files across six packages.
 
-For provider selection: accept a passthrough header (`x-better-ccflare-openrouter-provider`) and inject `body.provider = { order: [...], allow_fallbacks: true }` inside `transformRequestBody`. Prefer `order` over `only` to preserve fallback routing.
+The recommended approach is to extend `AnthropicCompatibleProvider` (not `OpenRouterProvider`) and override only four methods: `getEndpoint()`, `buildUrl()` (copy verbatim from `OpenRouterProvider` to avoid the double-segment path bug), `transformRequestBody()` (inject `body.provider` from `openrouter_provider_preference`; zero `cache_control` injection), and `extractUsageInfo()` / `extractStreamingUsage()` (call `super`, then attach `usage.cost` on non-streaming; return `costUsd: undefined` on streaming — cost is absent from all SSE events on this endpoint). The "blast radius" is predictable and grep-verifiable: every file containing the string `"openrouter"` as a mode or provider literal must gain a sibling `"openrouter-anthropic"` entry.
 
-For fork maintenance: rebase discipline on `thamw-main` (primary), merge fallback for large upstream releases. Enable `git rerere`. Tag merge points. Export patches to `.planning/patches/` after each integration.
-
----
-
-## Table Stakes
-
-These must work correctly before either feature can be trusted in production:
-
-1. **Cache token extraction on non-streaming OpenRouter responses.** `AnthropicCompatibleProvider.extractUsageInfo()` reads `usage.input_tokens` and `usage.cache_creation_input_tokens` — fields that do not exist in OpenRouter responses. OpenRouter returns `usage.prompt_tokens` and `usage.prompt_tokens_details.cache_write_tokens`. Non-streaming responses silently report zero cache tokens until this is fixed. The streaming path is already correct via the existing fork patch.
-
-2. **`cache_control` injection gated on model prefix.** The current injection fires for all models. Injecting `cache_control` for non-Anthropic models is either silently ignored or causes 400 errors. Gate must check `body.model.startsWith("anthropic/")` before injecting.
-
-3. **`cache_write_tokens` patch must survive upstream merges.** The existing fork patch in `packages/providers/src/providers/openai/provider.ts` (3 lines) is in a high-churn file that upstream actively refactors. Must be tagged `// FORK PATCH:` and covered by a test that fails on regression.
+The primary risk is the streaming cost gap: the OpenRouter native Anthropic Messages endpoint has no `cost` field in any SSE event (confirmed from the OpenRouter OpenAPI spec). Streaming costs will fall back to `estimateCostUSD()`, persisting either a token-estimate figure or null for unknown models — identical to the existing `openrouter` provider's fallback behavior. This is acceptable for v1.3 and must be explicitly documented in code. A secondary risk is the breadth of type-union propagation: missing even one of the eleven registration sites causes a silent mismatch (wrong DB value, 404 from dashboard, missing UI button). The mitigation is a single grep check after wiring: `grep -rn '"openrouter"' packages/ --include="*.ts" | grep -v test | grep -v "openrouter-anthropic"` should produce no hits that need a parallel entry.
 
 ---
 
-## Differentiators / Nice-to-haves
+## Key Findings
 
-- Per-block explicit cache breakpoints on both system message and a high-token user message (up to the 4-breakpoint limit). The current single top-level injection is coarser.
-- `ttl: "1h"` on content blocks for long agentic sessions. Prevents cache misses from sticky routing resets after 5-minute idle gaps at 2x write price.
-- Provider selection via account-level config field rather than only a passthrough header — per-account control without client cooperation.
-- Merge pre-flight CI check using `git merge-tree` dry-run on the three highest-risk files before each upstream integration.
-- Contributing the `cache_write_tokens` patch upstream to eliminate the highest-conflict file from the fork delta permanently.
+### Recommended Stack
 
----
+No new npm dependencies are required. The implementation is pure TypeScript using existing packages. The provider hierarchy already provides the right base class: `AnthropicCompatibleProvider` (which extends `BaseAnthropicCompatibleProvider`) handles Anthropic SSE parsing, rate-limit header reading, and `cache_creation_input_tokens` / `cache_read_input_tokens` field extraction — all correct for the native OpenRouter endpoint. The existing v1.2 cost chain (`AsyncDbWriter`, `resolveCostUsd()`, COALESCE in `save()`) persists without modification.
 
-## Watch Out For
+**Core technologies:**
+- `OpenRouterAnthropicProvider extends AnthropicCompatibleProvider` — correct inheritance; avoids OAI-format field readers and 4-breakpoint injector from `OpenRouterProvider`
+- `bun:test` with mock fetch — all unit tests; no live calls in CI
+- `buildUrl()` verbatim copy from `OpenRouterProvider` — strips leading `/v1` from pathname to avoid `/api/v1/v1/messages` double-segment
 
-**1. Top-level `cache_control` silently fails on Bedrock/Vertex routes.**
-Prevention: switch to per-block injection on `anthropic/*` models only; skip for all other model prefixes.
+**Critical version requirements:** None new. Existing Bun >= 1.2.8, TypeScript 6.0.2, and the `@dqbd/tiktoken` token counter for `estimateCostUSD()` fallback are already present.
 
-**2. `cache_write_tokens` extraction gap causes 5x cost underreporting.**
-Prevention: handle both `usage.cache_creation_input_tokens` (Anthropic native) and `usage.prompt_tokens_details.cache_write_tokens` (OpenRouter) in `extractUsageInfo`; add a test asserting non-zero cache write tokens from a mock OpenRouter non-streaming response.
+### Expected Features
 
-**3. `provider.only` eliminates all fallback; use `provider.order` instead.**
-Prevention: default to `order` with `allow_fallbacks: true`; reserve `only` for explicit compliance/ZDR requirements.
+**Must have (table stakes):**
+- Correct endpoint routing to `https://openrouter.ai/api/v1/messages` with `Authorization: Bearer` auth
+- Verbatim request passthrough (no `cache_control` injection — Claude Code sends its own blocks)
+- Cost tracking from `usage.cost` on non-streaming responses (typeof-guarded, real USD value)
+- Provider preference injection via existing `openrouter_provider_preference` column
+- Dashboard provider-preference dialog gate widened to include `"openrouter-anthropic"`
+- CLI `--add-account --mode openrouter-anthropic` registration
+- `ANTHROPIC_SHAPE_PROVIDERS` extended in `sse-rate-limit-sniffer.ts` so `overloaded_error` mid-stream frames trigger account failover
 
-**4. `openai/provider.ts` patch conflicts on every upstream refactor.**
-Prevention: keep the patch minimal (currently 3 lines), comment it clearly, run `git log upstream/main -- packages/providers/src/providers/openai/provider.ts` before every merge, regenerate `bun.lock` (never manually merge it) after any merge.
+**Should have (competitive, v1.3.x):**
+- `session_id` injection — routes all turns of a Claude Code session to the same OpenRouter backend from request 1, maximizing prompt cache hit rate (without it, sticky routing activates only after first observed cache hit)
+- `openrouter_metadata` debug logging — opt-in visibility into which backend served each request
 
-**5. Provider pinning and sticky cache routing are mutually exclusive.**
-Prevention: when `provider.order` is injected, document that cache hit rates may drop; for cache-critical workloads, omit provider selection and let OpenRouter manage sticky routing.
+**Defer (v2+):**
+- Extended `provider` routing fields in `openrouter_provider_preference` schema (`sort`, `data_collection`, `zdr`, `max_price`) — requires schema migration, UI expansion
+- Per-request OpenRouter provider selection via `x-better-ccflare-openrouter-provider` header
 
----
+### Architecture Approach
 
-## Phase Implications
+The integration is additive and bounded. The new class slots into the existing provider registry via one import and one `registerProvider()` call. The proxy stack (account-selector to request-handler to response-processor to post-processor worker) is fully polymorphic and requires zero changes; all per-provider behavior dispatches through the overridden methods. The mode string `"openrouter-anthropic"` must be propagated through type unions and runtime conditions in eleven files; ARCHITECTURE.md enumerates every site with exact line numbers and action required. The `PROVIDER_NAMES` / `PROVIDER_CONFIG` gap in `packages/types/src/provider-config.ts` is the highest-priority registration to get right — omitting it causes `getDefaultEndpoint()` to fall through to `"https://api.anthropic.com"` (account ban risk for diagnostic code paths).
 
-### Phase 1: Correctness fixes (must go first)
+**Major components:**
 
-Fix the two silent failure modes affecting live behavior and billing today.
+1. `OpenRouterAnthropicProvider` (`packages/providers/src/providers/openrouter-anthropic/`) — new class; four overrides; TDD with `bun:test`
+2. Type union propagation across 11 files — ARCHITECTURE.md Section 3 is the authoritative checklist; `bun run typecheck` after Step 4 surfaces remaining gaps
+3. HTTP API route + handler (`POST /api/accounts/openrouter-anthropic`) — new dedicated handler, never modifies the existing `openrouter` handler
+4. Dashboard wiring (`AccountAddForm`, `AccountListItem`, `AccountsTab`, `api.ts`) — mode branch, SelectItem, and provider-preference gate extension
 
-1. Override `extractUsageInfo()` in `OpenRouterProvider` to handle `prompt_tokens` + `prompt_tokens_details` for the non-streaming path. Streaming is already correct — do not touch it.
-2. Gate `cache_control` injection on `body.model.startsWith("anthropic/")`. Move from top-level to per-block injection on the last system message content item.
-3. Add `// FORK PATCH:` comment to the `openai/provider.ts` line. Add a unit test asserting non-zero cache token extraction from a mock OpenRouter non-streaming response.
+### Critical Pitfalls
 
-**Dependencies:** None. Pure bug fixes in contained files.
+1. **`buildUrl()` double-segment** — `AnthropicCompatibleProvider.buildUrl()` deduplication does not fire for `/v1/messages` against `baseUrl = .../api/v1`; result is `/api/v1/v1/messages` (all requests 404). Prevention: copy `OpenRouterProvider.buildUrl()` verbatim; unit test `buildUrl("/v1/messages", "")` must return exactly `"https://openrouter.ai/api/v1/messages"`.
 
----
+2. **Wrong parent class (`OpenRouterProvider`)** — inherits 4-breakpoint `cache_control` injector and OAI-format `extractUsageInfo`; injector pushes requests over the 4-block limit (HTTP 400); usage reads `prompt_tokens_details` (absent on native endpoint, cache tokens always 0). Prevention: extend `AnthropicCompatibleProvider` only; unit test with 4-block body asserts zero blocks added.
 
-### Phase 2: Provider selection feature
+3. **`extractUsageInfo` reads OAI-format cache fields** — copying `OpenRouterProvider.extractUsageInfo()` reads `prompt_tokens_details.cache_write_tokens` / `cached_tokens`, which do not exist on the native endpoint. Prevention: call `super.extractUsageInfo()` (base class reads Anthropic-native field names correctly), then attach `usage.cost` with `typeof` guard.
 
-Accept a provider preference and inject `body.provider` in `transformRequestBody`.
+4. **Provider name missing from type/config registration sites** — `"openrouter-anthropic"` omitted from `PROVIDER_NAMES` / `PROVIDER_CONFIG` causes `getDefaultEndpoint()` to fall through to `"https://api.anthropic.com"` (ban risk). Omitted from the dashboard `AccountAddForm` mode branch produces 404 on account creation. Prevention: run the grep check after Phase 2 wiring; `bun run typecheck` after type union updates.
 
-1. Start with passthrough header `x-better-ccflare-openrouter-provider` (zero DB schema change).
-2. Inject `body.provider = { order: [header_value], allow_fallbacks: true }` when header is present.
-3. Document the cache efficiency trade-off (provider pinning disables sticky routing).
+5. **SSE rate-limit sniffer not extended** — `ANTHROPIC_SHAPE_PROVIDERS` does not include `"openrouter-anthropic"`; `overloaded_error` mid-stream frames are ignored; overloaded accounts continue receiving requests without failover. Prevention: one-line addition to `sse-rate-limit-sniffer.ts` with unit test.
 
-**Dependencies:** Phase 1 should land first so `extractUsageInfo` is correct before routing complexity changes which provider serves requests.
-**Pitfalls:** Use `order` not `only`. Account for mid-stream 200-with-error SSE — check `finish_reason === "error"`.
-
----
-
-### Phase 3: Fork maintenance hardening
-
-Automate pre-flight and post-merge checks so upstream syncs stay low-friction.
-
-1. Enable `git rerere`. Create `.planning/scripts/pre-merge-check.sh` (4 git diff/log commands).
-2. Add patch export to `.planning/patches/` as a post-merge step.
-3. Add merge commit tagging (`merged-upstream-YYYYMMDD`).
-4. Open upstream contribution PR for Phase 1's `cache_write_tokens` fix once validated stable.
-
-**Dependencies:** Phases 1 and 2 must be stable.
-**Pitfalls:** Never manually edit `bun.lock`; always `rm bun.lock && bun install`. Tag shared-type changes with `// FORK:` comments.
+6. **Streaming cost decision (open, requires requirements decision)** — see DECISION POINT section below.
 
 ---
 
-## Open Questions
+## DECISION POINT: Streaming Cost Strategy
 
-1. **Non-streaming guard in `post-processor.worker.ts`:** Confirm whether a non-streaming OpenRouter request reaches `extractUsageInfo` in `base-anthropic-compatible.ts` or is short-circuited by the worker's `handleEnd` path before writing Phase 1's override.
+This is the primary unresolved design question. Requirements must decide before implementation begins.
 
-2. **Account config schema for provider preferences:** Phase 2 starts with a passthrough header for zero schema friction. Persisting provider preference per-account requires `packages/types/src/account.ts` change (a high-conflict file). Defer to header-only until there is a concrete use case.
+**Context:** The OpenRouter native Anthropic Messages endpoint has no `cost` field in any SSE event (confirmed HIGH confidence from OpenRouter OpenAPI spec, `MessagesDeltaEvent.usage` schema). Cost is only available in non-streaming JSON responses. All real Claude Code usage is streaming.
 
-3. **Upstream contribution timing:** Contribute the `cache_write_tokens` patch upstream immediately after Phase 1 validates it. Check open issues on `tombii/better-ccflare` for prior art first.
+**Option A — Accept estimateCostUSD() fallback (recommended)**
+- `extractStreamingUsage()` returns `costUsd: undefined` explicitly.
+- `resolveCostUsd()` in the post-processor worker receives `providerCostUsd = undefined`, falls through to `estimateCostUSD()`.
+- For unknown models, `estimateCostUSD()` returns 0, `resolveCostUsd` maps to `undefined`, DB writer writes `null`.
+- For known models, a token-estimate dollar figure is persisted.
+- Behavior is identical to the existing `openrouter` provider.
+- Must be documented with a `// FORK PATCH:` comment.
 
-4. **Non-Anthropic model usage extraction gap:** OpenRouter-routed non-Anthropic models returning OpenAI-format SSE will report zero usage. Deferred — address only if non-Anthropic models are actively used through this proxy.
+**Option B — Persist honest null (suppress estimate)**
+- Override `extractStreamingUsage()` to also suppress the `estimateCostUSD()` path by returning a sentinel that the worker interprets as "do not estimate."
+- Requires modifying the post-processor worker's `resolveCostUsd()` logic — a larger change than Option A.
+- Avoids misleading estimated costs on real-money accounts.
+- Higher implementation complexity; breaks the worker's clean abstraction.
+
+**Recommended resolution:** Accept Option A (the existing fallback chain behavior). Document clearly with a `// FORK PATCH:` comment. Revisit when OpenRouter adds `cost` to native Messages SSE events. Empirically verify with an integration test that non-streaming requests DO produce real cost values.
 
 ---
 
-*Synthesized: 2026-05-04 from STACK.md, FEATURES.md, ARCHITECTURE.md, PITFALLS.md*
+## Authoritative Blast Radius — Sites Requiring "openrouter-anthropic"
+
+Consolidated from ARCHITECTURE.md and PITFALLS.md. Every `"openrouter"` literal in the type/mode/provider role below needs a sibling `"openrouter-anthropic"` entry.
+
+### Type Unions (add `| "openrouter-anthropic"`)
+
+| File | What Changes |
+|------|-------------|
+| `packages/types/src/provider-config.ts` | `PROVIDER_NAMES` entry + `PROVIDER_CONFIG` keyed record |
+| `packages/types/src/account.ts` | `AccountListItem.mode` union (line 281) + `AddAccountOptions.mode` union (line 305) |
+| `packages/cli-commands/src/commands/account.ts` | Two mode union literals (lines 47, 79) |
+| `packages/dashboard-web/src/api.ts` | `initAddAccount` mode parameter union (line 259) |
+| `packages/dashboard-web/src/components/AccountsTab.tsx` | `handleAddAccount` mode parameter union (line 120) |
+| `packages/dashboard-web/src/components/accounts/AccountAddForm.tsx` | Four local mode union type literals (lines 28, 157, 431, 1020) |
+
+### Runtime Special-Case Conditions (add sibling branch)
+
+| File | What Changes |
+|------|-------------|
+| `packages/cli-commands/src/commands/account.ts` | New `else if (mode === "openrouter-anthropic")` branch (~line 1360) |
+| `packages/cli-commands/src/commands/account.ts` | `listAccounts()` mode inference — extend condition at line 1659 |
+| `packages/cli-commands/src/commands/help.ts` | Mode list + description (lines 9, 20) |
+| `packages/http-api/src/handlers/accounts.ts` | New dedicated `createOpenRouterAnthropicAccountAddHandler` function |
+| `packages/http-api/src/router.ts` | New route `POST:/api/accounts/openrouter-anthropic` |
+| `packages/dashboard-web/src/components/accounts/AccountAddForm.tsx` | New SelectItem + new form branch for `mode === "openrouter-anthropic"` |
+| `packages/dashboard-web/src/components/accounts/AccountListItem.tsx` | Widen provider-preference dialog gate at line 350 |
+| `packages/proxy/src/handlers/sse-rate-limit-sniffer.ts` | Extend `ANTHROPIC_SHAPE_PROVIDERS` set |
+
+### Sites That Do NOT Need Changes
+
+`response-processor.ts`, `usage-extraction.ts`, `post-processor.worker.ts`, DB migrations (SQLite + PG), `account.repository.ts`, `AccountOpenrouterProviderPreferenceDialog.tsx` (the dialog itself), `auto-refresh-scheduler.ts`, `toAccount()` / `toAccountResponse()` in `account.ts`. All cost-chain and SSE-parsing infrastructure is provider-agnostic.
+
+---
+
+## Implications for Roadmap
+
+### Phase 1: Provider Class + Unit Tests
+**Rationale:** Everything else depends on the provider class existing and behaving correctly. The four high-risk method overrides (buildUrl, transformRequestBody, extractUsageInfo, extractStreamingUsage) must be unit-tested before any integration wiring begins. A wrong parent class choice or incorrect buildUrl would cause all-requests-fail or silent data corruption that is harder to diagnose once the full stack is wired.
+**Delivers:** `OpenRouterAnthropicProvider` class with passing unit tests covering all pitfall scenarios; provider barrel and index exports.
+**Addresses:** Endpoint routing, Bearer auth, cost tracking (non-streaming), cache field reading, streaming cost null behavior.
+**Avoids:** Pitfalls 1 (readFinalSseCost), 2 (wrong parent), 3 (OAI-format fields), 7 (buildUrl double-segment).
+**Research flag:** None — patterns are well-documented. Test model on `/api/v1/messages` must be verified before tests are written.
+
+### Phase 2: Type Wiring + CLI + HTTP API + SSE Sniffer
+**Rationale:** Type unions must be complete before dashboard or integration tests can compile. CLI and HTTP API wiring enables manual verification (add account, list accounts, curl via proxy) before the dashboard is built. SSE sniffer and FORK PATCH annotations belong here as coexistence wiring tasks.
+**Delivers:** `bun run typecheck` passes; `--add-account --mode openrouter-anthropic` works; `POST /api/accounts/openrouter-anthropic` returns 200 with correct DB row; `overloaded_error` frames trigger failover; fork annotations and `HIGH_RISK_FILES` updated.
+**Addresses:** Full provider mode string registration, CLI mode dispatch and help text, HTTP API dedicated handler and route, SSE sniffer extension, fork hygiene.
+**Avoids:** Pitfalls 4 (incomplete registration), 6 (SSE sniffer), 8 (handler reuse), 9 (fork annotations).
+**Research flag:** None for wiring — standard propagation. Verify grep check at end: `grep -rn '"openrouter"' packages/ --include="*.ts" | grep -v test | grep -v "openrouter-anthropic"` should produce no unextended hits.
+
+### Phase 3: Dashboard Wiring
+**Rationale:** Dashboard changes are UI-only and have no upstream callers — they can be done after the API is stable. AccountAddForm, AccountListItem, AccountsTab, and api.ts are all contained within `packages/dashboard-web/`.
+**Delivers:** "Add Account" form surfaces `openrouter-anthropic` as a mode option; account cards show provider-preference settings button; API client method calls the new route.
+**Addresses:** AccountAddForm mode branch + SelectItem, AccountListItem dialog gate, AccountsTab union, api.ts method + union.
+**Avoids:** Pitfall 5 (dialog gate not extended).
+**Research flag:** None — mechanical propagation.
+
+### Phase 4: Integration Test + Verification
+**Rationale:** End-to-end validation via a real (`:free` model, non-Anthropic, force-routed) request through the full proxy stack. Must confirm: cost persists correctly for non-streaming, cost is null/estimated for streaming, cache token fields are populated, provider preference injection fires, account failover on overload.
+**Delivers:** Confidence the full stack works together; streaming cost decision empirically confirmed; `usage.cost` field presence on non-streaming responses verified.
+**Uses:** `x-better-ccflare-account-id` header + non-Anthropic `:free` model (availability on `/api/v1/messages` confirmed at Phase 1 start).
+**Avoids:** Pitfalls 10 (Anthropic ban risk), 11 (test model unavailable on native endpoint).
+**Research flag:** Verify at Phase 1 start which `:free` model is available on `/api/v1/messages`. `z-ai/glm-4.5-air:free` is the established safe model for the OAI-format provider but native endpoint availability must be confirmed. Document chosen model in Phase 4 plan.
+
+### Phase Ordering Rationale
+
+- Phase 1 before Phase 2: TypeScript compilation of the wiring phase depends on the provider class existing and exporting correctly.
+- Phase 2 before Phase 3: Dashboard API client calls the HTTP route; route must exist before dashboard is wired.
+- Phase 3 before Phase 4: Integration test validates the full end-to-end stack including dashboard-initiated account creation.
+- Parallelizable within phases: `PROVIDER_NAMES`/`PROVIDER_CONFIG` (Phase 2, Step 3 in ARCHITECTURE.md) can be done simultaneously with Phase 1 provider class work. CLI wiring and HTTP API wiring can proceed in parallel once type unions are complete.
+
+### Research Flags
+
+Phases needing deeper research during planning:
+- **Phase 4:** Test model availability on `/api/v1/messages` — `z-ai/glm-4.5-air:free` is known-good for the OAI-format endpoint but must be verified for the native Anthropic Messages endpoint. Use `provider.order = ["ZhipuAI"]` to constrain routing away from Anthropic infrastructure.
+
+Phases with standard patterns (skip research-phase):
+- **Phase 1:** Provider class patterns are fully documented in STACK.md + ARCHITECTURE.md. All four override implementations have pseudocode; `buildUrl` override has the exact code to copy.
+- **Phase 2:** Propagation pattern is mechanical; ARCHITECTURE.md Section 3 is a complete enumeration with line numbers.
+- **Phase 3:** Dashboard wiring mirrors Phase 2; no new patterns.
+
+---
+
+## Confidence Assessment
+
+| Area | Confidence | Notes |
+|------|------------|-------|
+| Stack | HIGH | Primary source: OpenRouter OpenAPI spec fetched 2026-06-02. `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent` schemas verified. No-cost-in-SSE confirmed from spec schema. |
+| Features | HIGH | OpenRouter docs (endpoint schema, caching guide, provider routing, router metadata) fetched directly. MVP feature set is minimal and all dependencies already shipped in v1.1–v1.2. |
+| Architecture | HIGH | Direct codebase inspection with grep-backed enumeration of all `"openrouter"` literal sites. Every registration location confirmed with line numbers. |
+| Pitfalls | HIGH | All 11 pitfalls are grounded in specific codebase inspection (line numbers, method names) and OpenRouter spec schema details. No inference-only entries in the critical category. |
+
+**Overall confidence:** HIGH
+
+### Gaps to Address
+
+- **Streaming cost decision:** Whether to suppress `estimateCostUSD()` fallback for streaming on `openrouter-anthropic` accounts, or accept it. Recommendation: accept the existing fallback chain (Option A). Must be explicitly decided in requirements and documented in code.
+- **Test model availability on `/api/v1/messages`:** `z-ai/glm-4.5-air:free` confirmed for OAI-format endpoint; native endpoint availability unverified. Resolve at Phase 1 start via a one-time live check using an `openrouter-anthropic` account with `x-better-ccflare-account-id`.
+- **`usage.cost` field empirical verification:** STACK.md spec-based confidence is HIGH, but the spec shows `cost: number | null` — `null` is valid. Empirical verification with a real non-streaming response confirms that `cost` is consistently non-null in practice. Use the Phase 4 integration test for this.
+- **`session_id` injection:** Deferred to v1.3.x. If included, requires deriving a stable session token from connection/account context — not researched in depth.
+
+---
+
+## Sources
+
+### Primary (HIGH confidence)
+- `https://openrouter.ai/openapi.yaml` (fetched 2026-06-02) — `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent`, `MessagesStopEvent`, `ProviderPreferences` schemas; no `cost` field in SSE confirmed
+- Direct codebase reading (2026-06-02) — `base-anthropic-compatible.ts`, `openrouter/provider.ts`, `anthropic-compatible/provider.ts`, `provider-config.ts`, `account.ts`, `accounts.ts`, `router.ts`, `AccountAddForm.tsx`, `AccountListItem.tsx`, `sse-rate-limit-sniffer.ts`, `usage-extraction.ts`, `post-processor.worker.ts`
+- Grep-backed enumeration of all `"openrouter"` literal sites across `packages/**`
+
+### Secondary (MEDIUM confidence)
+- `https://openrouter.ai/docs/guides/best-practices/prompt-caching` — cache TTL values, sticky routing behavior, per-block vs top-level caching modes
+- `https://openrouter.ai/docs/guides/routing/provider-selection` — `ProviderPreferences` field table
+- `https://openrouter.ai/docs/guides/features/response-caching` — cache hit behavior (zeroed tokens)
+- `https://openrouter.ai/docs/guides/features/router-metadata` — `openrouter_metadata` streaming delivery in `message_stop`
+- `https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration` — native Anthropic Messages passthrough pattern
+
+### Tertiary (LOW confidence)
+- `https://www.proredcat.xyz/blog/openrouter-cache-write-calculation` — early 2026 cache write token reporting change confirmation (external blog, corroborated by WebSearch findings)
+
+---
+*Research completed: 2026-06-02*
+*Ready for roadmap: yes*

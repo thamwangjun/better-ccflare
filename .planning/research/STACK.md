@@ -1,132 +1,256 @@
-# Stack Research — v1.1
+# Stack Research — v1.3
 
 **Project:** better-ccflare personal fork
-**Researched:** 2026-05-05
-**Mode:** Ecosystem / targeted stack additions
+**Researched:** 2026-06-02
+**Mode:** Targeted stack additions for OpenRouter Anthropic Messages provider
+**Confidence:** HIGH (primary source: OpenRouter OpenAPI spec at https://openrouter.ai/openapi.yaml, accessed 2026-06-02; schemas `MessagesResult`, `AnthropicUsage`, `MessagesDeltaEvent`, `MessagesStopEvent`, `MessagesStartEvent`)
 
 ---
 
-## Summary
+## TL;DR for Implementers
 
-All three v1.1 features (4th cache breakpoint, 1-hour TTL, per-account provider preference) require **zero new npm dependencies**. Every capability needed already exists in the codebase or in the OpenRouter/Anthropic API surface. Work is purely TypeScript logic changes to the OpenRouter provider and the existing SQLite schema extension pattern the codebase already follows.
+No new npm dependencies. One new class (`OpenRouterAnthropicProvider`), one `index.ts` barrel, two CLI union type entries, one dashboard gate change. The new provider extends `AnthropicCompatibleProvider` (not `OpenRouterProvider`) and overrides `transformRequestBody` (provider preference injection only, no cache_control injection) and `extractUsageInfo` (attach `usage.cost`). The base class SSE streaming reader handles this endpoint's events correctly — with one confirmed gap: **no `cost` field exists in any SSE event on the native Anthropic Messages endpoint**. Cost is only available in non-streaming responses.
+
+---
+
+## Confirmed API Facts
+
+Source: `https://openrouter.ai/openapi.yaml` (fetched 2026-06-02). Confidence: HIGH.
+
+### 1. Endpoint
+
+```
+POST https://openrouter.ai/api/v1/messages
+```
+
+### 2. Auth
+
+- **Required:** `Authorization: Bearer <api_key>`
+- **Optional:** `X-OpenRouter-Experimental-Metadata: enabled` — surfaces routing metadata under `openrouter_metadata` on the response; defaults to `disabled`; not needed for normal operation
+- `HTTP-Referer` and `X-Title` are **not listed** in the spec's parameter block for this endpoint. They are undocumented courtesy headers with no verified effect on this endpoint. Do not add.
+- `x-session-id` header (or body `session_id` field) enables sticky routing per session
+
+Config for new provider: `authHeader: "authorization"`, `authType: "bearer"` — identical to existing `OpenRouterProvider`.
+
+### 3. Non-Streaming Response Usage Object
+
+The full non-streaming response schema is `MessagesResult` = `BaseMessagesResult` + OpenRouter extensions.
+
+**`AnthropicUsage` (the base usage schema, confirmed from spec):**
+
+```typescript
+{
+  input_tokens: number,                          // required
+  output_tokens: number,                         // required
+  cache_creation_input_tokens: number | null,    // nullable integer — Anthropic-native name
+  cache_read_input_tokens: number | null,        // nullable integer — Anthropic-native name
+  cache_creation: {                              // nullable sub-object
+    ephemeral_5m_input_tokens: number,
+    ephemeral_1h_input_tokens: number,
+  } | null,
+  output_tokens_details: AnthropicOutputTokensDetails | null,
+  server_tool_use: AnthropicServerToolUsage | null,
+  service_tier: string,   // e.g. "standard" or "default"
+  inference_geo: string | null,
+}
+```
+
+**OpenRouter additions on `MessagesResult.usage` (confirmed from spec):**
+
+```typescript
+{
+  cost: number | null,   // format: double — USD cost; the key field for cost tracking
+  cost_details: {
+    upstream_inference_completions_cost: number,   // format: double
+    upstream_inference_prompt_cost: number,        // format: double
+    upstream_inference_cost: number | null,        // format: double, nullable
+  } | null,
+  is_byok: boolean,
+  speed: AnthropicSpeed,
+  iterations: AnthropicUsageIteration[],
+}
+```
+
+**Critical confirmed facts:**
+- Field name is `usage.cost` (type `number | null`, format double). The existing `typeof json.usage.cost === "number"` guard from `OpenRouterProvider.extractUsageInfo()` applies identically.
+- `cache_creation_input_tokens` and `cache_read_input_tokens` use **Anthropic-native names** on this endpoint. They are NOT under `prompt_tokens_details`. The `OpenRouterProvider` override that reads `prompt_tokens_details.cached_tokens` and `prompt_tokens_details.cache_write_tokens` is **wrong** for this endpoint and must not be inherited.
+- No `prompt_tokens` / `completion_tokens` / `total_tokens` / `prompt_tokens_details` fields — those are OpenAI-format only and do not appear in this endpoint's response.
+
+### 4. Streaming SSE Events
+
+All standard Anthropic event types: `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`, `ping`, `error`.
+
+**OpenRouter-specific additions:**
+- `message_stop` carries an optional `openrouter_metadata` field (routing metadata) when `X-OpenRouter-Experimental-Metadata: enabled` was sent. Otherwise identical to Anthropic's `message_stop`.
+- `ping` events occur as keepalives — present in Anthropic spec too, parsers should ignore.
+
+**`MessagesStartEvent.message.usage` (from spec):**
+```typescript
+{
+  input_tokens: number,
+  output_tokens: number,         // 0 at stream start
+  cache_creation_input_tokens: number | null,
+  cache_read_input_tokens: number | null,
+  cache_creation: { ... } | null,
+  inference_geo: string | null,
+  server_tool_use: null,
+  service_tier: string,
+  // No cost field.
+}
+```
+
+**`MessagesDeltaEvent.usage` (from spec — exact schema):**
+```typescript
+{
+  input_tokens: number | null,              // final input count
+  output_tokens: number,                    // required — final output count
+  output_tokens_details: AnthropicOutputTokensDetails | null,
+  cache_creation_input_tokens: number | null,
+  cache_read_input_tokens: number | null,
+  server_tool_use: { web_search_requests: number, web_fetch_requests: number } | null,
+  iterations: AnthropicUsageIteration[],
+  // No cost field. Confirmed absent from the MessagesDeltaEvent schema.
+}
+```
+
+**`MessagesStopEvent` (from spec):** `type: "message_stop"` + optional `openrouter_metadata`. No usage. No cost.
+
+**STREAMING COST GAP — CONFIRMED:** No `cost` field exists in any SSE event on the native Anthropic Messages endpoint (`/api/v1/messages`). This differs from the OpenAI-format `/api/v1/chat/completions` endpoint, where OpenRouter injects `usage.cost` into the final `message_delta`. The existing `OpenRouterProvider.readFinalSseCost()` behavior **does not apply here**. Cost for streaming requests on `openrouter-anthropic` accounts will be `null` in the database unless `estimateCostUSD()` is used as a fallback.
+
+### 5. Provider Routing Extension
+
+The `provider` field is fully supported in the request body. `ProviderPreferences` in `MessagesRequest.provider` includes (among others): `order` (provider slug array), `allow_fallbacks` (boolean). The existing `openrouter_provider_preference` injection pattern (`body.provider = { order, allow_fallbacks }`) works unchanged on this endpoint. The guard `!("provider" in body)` for non-destructive injection is correct.
 
 ---
 
 ## New Dependencies
 
-**None required.** Rationale for each feature:
-
-| Feature | Why no new dep needed |
-|---|---|
-| 4th cache breakpoint | Pure logic change in `transformRequestBody` — add one more `if` block targeting high-token user messages |
-| 1-hour TTL cache blocks | API format change: add `"ttl": "1h"` to existing `{ type: "ephemeral" }` objects — no library needed |
-| Per-account provider preference | Store JSON string in new `openrouter_provider_preference` column (same pattern as `model_mappings`); inject into request body in `transformRequestBody` |
+**None required.** The implementation is pure TypeScript using existing packages. No new npm packages.
 
 ---
 
 ## Integration Points
 
-### Feature 1: 4th cache breakpoint (high-token user message)
+### New Provider Class
 
-**File:** `packages/providers/src/providers/openrouter/provider.ts`
-**Function:** `transformRequestBody` (existing FORK PATCH block, lines 40–117)
+**File:** `packages/providers/src/providers/openrouter-anthropic/provider.ts`
 
-The current implementation handles 3 breakpoints (tools, system, last assistant turn). The 4th breakpoint targets the last user message in `messages[]`. Anthropic's documented ordering for cache placement is:
-
-1. tools (already done — breakpoint 1)
-2. system (already done — breakpoint 2)
-3. last assistant turn (already done — breakpoint 3)
-4. last user message (new — breakpoint 4)
-
-Implementation: find the last message with `role === "user"` in `body.messages`, apply `cache_control` to its last content block using the same pattern as breakpoint 3 (assistant turn). If content is a string, convert to array form first.
-
-**Constraint verified (HIGH confidence — official Anthropic docs):** 4 is the hard limit. If 4 explicit block-level breakpoints exist and automatic caching is also requested, the API returns a 400. The current 3-breakpoint implementation leaves the 4th slot open; adding a 4th explicit breakpoint is safe. The codebase never sends a top-level `cache_control` field.
-
-**Test file:** `packages/providers/src/providers/openrouter/__tests__/provider.test.ts` — add test cases to the existing `describe` block following the existing `makeRequest` factory pattern.
-
----
-
-### Feature 2: 1-hour TTL cache blocks
-
-**File:** `packages/providers/src/providers/openrouter/provider.ts`
-**Function:** `transformRequestBody`
-
-**API format (HIGH confidence — official OpenRouter docs, cross-verified with Anthropic docs):**
-- 5-minute default (current): `{ "type": "ephemeral" }`
-- 1-hour extended: `{ "type": "ephemeral", "ttl": "1h" }`
-
-The `ttl` field is additive to the existing object — same `type`, new `ttl` key. No structural change to the injection pattern.
-
-**How the provider knows which TTL to use:** Store a per-account setting in the DB using a new column `openrouter_cache_ttl TEXT DEFAULT NULL`. Values: `null` (default, means 5-min ephemeral), `"1h"` (extended). This is consistent with the project's per-account field pattern and is user-controllable without redeployment.
-
-**Schema change:** Add column `openrouter_cache_ttl TEXT DEFAULT NULL` to `accounts` table in `packages/database/src/migrations.ts` (`runMigrations` transaction block, idempotent `ALTER TABLE` pattern — see existing examples at lines 337–471).
-
-**Type changes required:**
-
-| File | Change |
-|---|---|
-| `packages/types/src/account.ts` — `AccountRow` | Add `openrouter_cache_ttl?: string \| null` |
-| `packages/types/src/account.ts` — `Account` | Add `openrouter_cache_ttl: string \| null` |
-| `packages/types/src/account.ts` — `toAccount()` | Map `row.openrouter_cache_ttl \|\| null` |
-| `packages/types/src/account.ts` — `AccountResponse` | Add `openrouterCacheTtl?: string \| null` |
-| `packages/types/src/account.ts` — `toAccountResponse()` | Pass `account.openrouter_cache_ttl` through |
-
----
-
-### Feature 3: Per-account OpenRouter provider preference
-
-**API format (HIGH confidence — official OpenRouter provider routing docs):**
-```json
-{
-  "provider": {
-    "order": ["anthropic", "openai"],
-    "allow_fallbacks": true
-  }
-}
+**Class hierarchy:**
+```
+BaseProvider
+  └── BaseAnthropicCompatibleProvider   (base-anthropic-compatible.ts)
+        └── AnthropicCompatibleProvider (anthropic-compatible/provider.ts)
+              └── OpenRouterAnthropicProvider  ← NEW
 ```
 
-The `provider` field goes at the top level of the request body alongside `model` and `messages`. `provider.order` is an array of provider slug strings. `allow_fallbacks: true` is the default and must always be set (project constraint: never use `provider.only`).
+Do NOT extend `OpenRouterProvider`. That class inherits the wrong `extractUsageInfo` (reads OAI-format `prompt_tokens_details`), the 4-breakpoint `cache_control` injector, and `readFinalSseCost()` — none applicable here.
 
-**Storage:** Follow the `model_mappings` pattern exactly — store as a JSON string (`["anthropic","openai"]`) in a new `openrouter_provider_preference TEXT DEFAULT NULL` column. Parse it in `transformRequestBody` and inject.
+**Minimum constructor config:**
+```typescript
+super({
+  name: "openrouter-anthropic",
+  baseUrl: "https://openrouter.ai/api/v1",
+  authHeader: "authorization",
+  authType: "bearer",
+  supportsStreaming: true,
+});
+```
 
-**ENV var path for global default:** A simple global `OPENROUTER_PROVIDER_ORDER` env var (comma-separated slugs, e.g. `anthropic,openai`) read in `transformRequestBody` as a fallback when no per-account setting is present. This requires no schema change for the global case. The per-account DB setting takes precedence over the global ENV var.
+**Required overrides:**
 
-**Files to change:**
+| Override | Reason |
+|----------|--------|
+| `getEndpoint()` | Return `"https://openrouter.ai/api/v1"` |
+| `transformRequestBody()` | Inject `body.provider` from `account.openrouter_provider_preference`; do NOT inject `cache_control` (passthrough natively) |
+| `extractUsageInfo()` | Delegate streaming path to `extractStreamingUsage`; for non-streaming, call `super` (which correctly reads Anthropic-native cache fields), then attach `usage.cost` with `typeof` guard |
+| `extractStreamingUsage()` or `parseUsage()` | Return `costUsd: undefined` explicitly (no real cost available in SSE); avoids persisting a wrong estimate as `cost_usd` |
+
+**`buildUrl()` note:** `AnthropicCompatibleProvider.buildUrl()` deduplicates the `/v1` path prefix when `baseUrl` ends with `/api/v1` and the incoming path is `/v1/messages`. Net result: `https://openrouter.ai/api/v1/messages`. Verify this at implementation time — if deduplication misfires, add the same `cleanPathname` override as `OpenRouterProvider.buildUrl()` uses.
+
+**`transformRequestBody()` design:** Call `super.transformRequestBody()` first (applies model mapping), then inject `body.provider` from `account.openrouter_provider_preference`. Copy the injection block from `OpenRouterProvider.transformRequestBody()` verbatim (lines 194–209 of `openrouter/provider.ts`). Do not copy the `cache_control` injection blocks.
+
+**`extractUsageInfo()` design for non-streaming:**
+```typescript
+// Call super first — base reads input_tokens, output_tokens,
+// cache_creation_input_tokens, cache_read_input_tokens correctly.
+const base = await super.extractUsageInfo(response);  // but NOT with streaming branch
+// Then re-read json.usage.cost and attach:
+const costUsd = typeof json.usage.cost === "number" ? json.usage.cost : undefined;
+return { ...base, costUsd };
+```
+The base class `extractUsageInfo` also calls `estimateCostUSD()`. Since real `usage.cost` is available on non-streaming responses, the estimate should be overridden with the real value.
+
+**`extractStreamingUsage()` design:** The base class implementation correctly reads `message_start` and `message_delta` SSE events for token counts on this endpoint. The only change: since no `cost` is available in SSE, return `costUsd: undefined` instead of the estimate. Pattern:
+```typescript
+const base = await super.extractStreamingUsage(clone, originalHeaders);
+if (!base) return null;
+return { ...base, costUsd: undefined };  // no real cost in SSE on this endpoint
+```
+
+### Files to Change
 
 | File | Change |
-|---|---|
-| `packages/database/src/migrations.ts` | Add `ALTER TABLE accounts ADD COLUMN openrouter_provider_preference TEXT` in idempotent migration block; add `ALTER TABLE accounts ADD COLUMN openrouter_cache_ttl TEXT` in same block |
-| `packages/types/src/account.ts` — `AccountRow` | Add `openrouter_provider_preference?: string \| null` |
-| `packages/types/src/account.ts` — `Account` | Add `openrouter_provider_preference: string \| null` |
-| `packages/types/src/account.ts` — `toAccount()` | Map `row.openrouter_provider_preference \|\| null` |
-| `packages/types/src/account.ts` — `AccountResponse` | Add `openrouterProviderPreference?: string[] \| null` (parsed array form for dashboard) |
-| `packages/types/src/account.ts` — `toAccountResponse()` | Parse JSON, pass through array |
-| `packages/providers/src/providers/openrouter/provider.ts` — `transformRequestBody` | After cache injection: if `account.openrouter_provider_preference` set, parse JSON and inject `body.provider = { order: parsed, allow_fallbacks: true }`; fall back to `OPENROUTER_PROVIDER_ORDER` env var if no per-account setting |
-| `packages/http-api/src/handlers/accounts.ts` | Add PATCH handler to update the new column (follow the `model_mappings` update pattern at ~line 2128) |
-| `packages/database/src/repositories/account.repository.ts` | Include both new columns in SELECT and UPDATE queries |
-| `packages/dashboard-web/src/components/accounts/` | New `AccountOpenRouterProviderDialog.tsx` component modeled on `AccountModelMappingsDialog.tsx` — text input for comma-separated provider slugs, saved as JSON array |
+|------|--------|
+| `packages/providers/src/providers/openrouter-anthropic/provider.ts` | New class (create) |
+| `packages/providers/src/providers/openrouter-anthropic/index.ts` | Re-export barrel (create) |
+| `packages/providers/src/providers/openrouter-anthropic/__tests__/provider.test.ts` | Unit tests with bun:test (create) |
+| `packages/providers/src/providers/index.ts` | Add `export { OpenRouterAnthropicProvider }` |
+| `packages/providers/src/index.ts` | Add `import` + `registry.registerProvider(new OpenRouterAnthropicProvider())` |
+| `packages/cli-commands/src/commands/account.ts` | Add `"openrouter-anthropic"` to two `mode` union type literals (~line 47 and ~line 79); add `mode === "openrouter-anthropic"` branch in the `addAccount` flow (mirrors the `openrouter` branch with different label) |
+| `packages/dashboard-web/src/components/accounts/AccountListItem.tsx` | Extend the provider preference dialog gate from `account.provider === "openrouter"` to also include `"openrouter-anthropic"` (line ~350) |
+
+### No Database Changes Required
+
+The `openrouter_provider_preference` column was added in v1.1 and is already on the `accounts` table (SQLite + PostgreSQL). No new columns needed. The new provider reads the same column.
+
+### No New Types Required
+
+`AccountRow`, `Account`, and `AccountResponse` already include `openrouter_provider_preference`. The new provider name just needs to be a valid string in the registry. No type union changes beyond the `mode` field in the CLI command module.
 
 ---
 
 ## What NOT to Add
 
-**Do not add a caching middleware layer.** The 1-hour TTL is a field value change in the request body, not a response caching concern. No in-process cache or Redis needed.
+| Avoid | Why |
+|-------|-----|
+| Extending `OpenRouterProvider` | Its `extractUsageInfo` reads OAI-format `prompt_tokens_details` — wrong for this endpoint; its `cache_control` injector would double-inject on top of Claude Code's own blocks |
+| `cache_control` injection in `transformRequestBody` | This endpoint passes cache_control through natively; Claude Code already sends cache_control; injection is not needed and would corrupt prompts |
+| `readFinalSseCost()` or similar streaming cost reader | No `cost` field exists in any SSE event on this endpoint per the spec; would always return undefined |
+| New npm dependencies | None needed |
+| Modifying `base-anthropic-compatible.ts` or `AnthropicCompatibleProvider` | Upstream-shared code; modifications break upstream merge hygiene |
+| Modifying `OpenRouterProvider` | Fork-safety requirement: leave it untouched |
+| `HTTP-Referer` / `X-Title` headers | Not in spec's parameter block; no documented effect |
+| `X-OpenRouter-Experimental-Metadata` header | Optional, defaults off, not needed for basic operation or cost tracking |
+| Global `OPENROUTER_ANTHROPIC_PROVIDER_ORDER` env var | Out of scope for v1.3; per-account preference is sufficient |
 
-**Do not use `provider.only`.** Project constraint: always use `provider.order` with `allow_fallbacks: true`. Using `only` eliminates fallback routing and would cause hard failures if the preferred provider is rate-limited or down.
+---
 
-**Do not create a new provider subclass for OpenRouter-with-preferences.** Extend `OpenRouterProvider.transformRequestBody` directly. The conditional logic is localized and isolated from upstream code (upstream does not touch the FORK PATCH injection blocks).
+## Alternatives Considered
 
-**Do not abstract a "cache TTL manager" class.** The TTL is one field on two to four objects per request. Over-engineering this adds indirection without benefit.
-
-**Do not reuse the `model_mappings` column to store provider preference.** `model_mappings` is used by multiple providers and has its own parsing semantics in the dashboard. A dedicated `openrouter_provider_preference` column is cleaner and prevents future confusion.
-
-**Do not add a `provider.quantizations` or `provider.sort` field.** OpenRouter supports these in the same `provider` object but they are out of scope for v1.1 and would require additional UI work.
+| Recommended | Alternative | Why Not |
+|-------------|-------------|---------|
+| Extend `AnthropicCompatibleProvider` | Extend `OpenRouterProvider` | `OpenRouterProvider` overrides `extractUsageInfo` for OAI-format fields, injects 4 cache_control breakpoints, reads streaming cost from `message_delta.usage.cost` — all incorrect for this endpoint |
+| Separate `openrouter-anthropic` provider name | Reuse `openrouter` with a flag | Would require conditional logic in already-patched `OpenRouterProvider`; coexistence is cleaner and safer for upstream merges |
+| `costUsd: undefined` for streaming | Use `estimateCostUSD()` as fallback | Consistent with `OpenRouterProvider`'s approach; avoids persisting estimated costs for real-money accounts where the actual cost is unknown |
+| Passthrough `cache_control` | Copy 4-breakpoint injection | The native endpoint accepts cache_control natively; Claude Code sends its own cache_control; injection would double-inject breakpoints |
 
 ---
 
 ## Sources
 
-- OpenRouter prompt caching docs (TTL format, breakpoint limit): https://openrouter.ai/docs/guides/best-practices/prompt-caching — HIGH confidence (verified via WebFetch 2026-05-05)
-- OpenRouter provider routing docs (`provider.order` format): https://openrouter.ai/docs/guides/routing/provider-selection — HIGH confidence (verified via WebFetch 2026-05-05)
-- Anthropic prompt caching docs (4-breakpoint hard limit, TTL values): https://platform.claude.com/docs/en/build-with-claude/prompt-caching — HIGH confidence (verified via WebFetch 2026-05-05)
-- Codebase direct inspection: `packages/types/src/account.ts`, `packages/database/src/migrations.ts`, `packages/providers/src/providers/openrouter/provider.ts`, `packages/http-api/src/handlers/accounts.ts`
+- `https://openrouter.ai/openapi.yaml` (fetched 2026-06-02 via Bash curl) — **PRIMARY SOURCE, HIGH confidence**
+  - `AnthropicUsage`: `input_tokens`, `output_tokens`, `cache_creation_input_tokens` (nullable), `cache_read_input_tokens` (nullable), `cache_creation`, `service_tier`, `inference_geo`
+  - `MessagesResult.usage` additions: `cost: number | null` (format: double), `cost_details`, `is_byok`, `speed`, `iterations`
+  - `MessagesDeltaEvent.usage`: `input_tokens`, `output_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, `output_tokens_details`, `server_tool_use`, `iterations` — **no `cost` field confirmed absent**
+  - `MessagesStopEvent`: `type` + optional `openrouter_metadata` only — no cost
+  - `MessagesStartEvent.message.usage`: `AnthropicUsage` shape — no cost
+  - `MessagesRequest.provider` = `ProviderPreferences`: `order`, `allow_fallbacks`, and extended routing fields — confirmed supported
+  - Auth: `Authorization: Bearer` required; `X-OpenRouter-Experimental-Metadata` optional
+- `https://openrouter.ai/docs/api/api-reference/anthropic-messages/create-messages` (fetched 2026-06-02) — MEDIUM confidence (page truncated before response schemas; used for auth header confirmation)
+- Web search + openrouter.ai/docs/guides/best-practices/prompt-caching (2026-06-02) — MEDIUM confidence; corroborates Anthropic-native field names on `/api/v1/messages` and confirms OAI-format endpoint uses different field names
+- Codebase reading of `base-anthropic-compatible.ts`, `openrouter/provider.ts`, `anthropic-compatible/provider.ts`, `providers/src/index.ts`, `AccountListItem.tsx` — HIGH confidence (ground truth for integration points)
+
+---
+
+*Stack research for: OpenRouter Anthropic Messages provider (v1.3)*
+*Researched: 2026-06-02*
