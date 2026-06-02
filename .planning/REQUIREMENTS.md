@@ -9,23 +9,23 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Provider (PROV)
 
-- [ ] **PROV-01**: User can route Claude Code requests to OpenRouter's native Anthropic Messages endpoint (`POST https://openrouter.ai/api/v1/messages`) via a new `openrouter-anthropic` account type with `Authorization: Bearer` auth
-- [ ] **PROV-02**: The new provider passes request bodies through verbatim — no Anthropic→OpenAI transformation and no `cache_control` breakpoint injection
-- [ ] **PROV-03**: The `openrouter-anthropic` provider coexists with the existing OpenAI-format `openrouter` provider, leaving its behavior unchanged
+- [x] **PROV-01**: User can route Claude Code requests to OpenRouter's native Anthropic Messages endpoint (`POST https://openrouter.ai/api/v1/messages`) via a new `openrouter-anthropic` account type with `Authorization: Bearer` auth
+- [x] **PROV-02**: The new provider passes request bodies through verbatim — no Anthropic→OpenAI transformation and no `cache_control` breakpoint injection
+- [x] **PROV-03**: The `openrouter-anthropic` provider coexists with the existing OpenAI-format `openrouter` provider, leaving its behavior unchanged
 
 ### Caching (CACHE)
 
-- [ ] **CACHE-01**: The user's native `cache_control` blocks (5m / 1h ttl) pass through to OpenRouter unchanged
+- [x] **CACHE-01**: The user's native `cache_control` blocks (5m / 1h ttl) pass through to OpenRouter unchanged
 
 ### Routing (ROUTE)
 
-- [ ] **ROUTE-01**: The user's per-account `openrouter_provider_preference` injects `body.provider = { order, allow_fallbacks }` on the new provider
-- [ ] **ROUTE-02**: All turns of a Claude Code session route to the same OpenRouter backend via `session_id` injection, maximizing prompt-cache hit rate from request 1
+- [x] **ROUTE-01**: The user's per-account `openrouter_provider_preference` injects `body.provider = { order, allow_fallbacks }` on the new provider
+- [x] **ROUTE-02**: All turns of a Claude Code session route to the same OpenRouter backend via `session_id` injection, maximizing prompt-cache hit rate from request 1
 
 ### Cost (COST)
 
-- [ ] **COST-01**: Real `usage.cost` from non-streaming responses persists to `requests.cost_usd` (typeof-guarded)
-- [ ] **COST-02**: Real `usage.cost` from the final streaming SSE `message_delta` persists to `requests.cost_usd` — no estimate fallback for streaming
+- [x] **COST-01**: Real `usage.cost` from non-streaming responses persists to `requests.cost_usd` (typeof-guarded)
+- [x] **COST-02**: Real `usage.cost` from the final streaming SSE `message_delta` persists to `requests.cost_usd` — no estimate fallback for streaming
 
 ### Failover (FAIL)
 
@@ -69,14 +69,14 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROV-01 | Phase 9 | Pending |
-| PROV-02 | Phase 9 | Pending |
-| PROV-03 | Phase 9 | Pending |
-| CACHE-01 | Phase 9 | Pending |
-| ROUTE-01 | Phase 9 | Pending |
-| ROUTE-02 | Phase 9 | Pending |
-| COST-01 | Phase 9 | Pending |
-| COST-02 | Phase 9 | Pending |
+| PROV-01 | Phase 9 | Complete |
+| PROV-02 | Phase 9 | Complete |
+| PROV-03 | Phase 9 | Complete |
+| CACHE-01 | Phase 9 | Complete |
+| ROUTE-01 | Phase 9 | Complete |
+| ROUTE-02 | Phase 9 | Complete |
+| COST-01 | Phase 9 | Complete |
+| COST-02 | Phase 9 | Complete |
 | FAIL-01 | Phase 10 | Pending |
 | OBS-01 | Phase 10 | Pending |
 | MGMT-01 | Phase 10 | Pending |
