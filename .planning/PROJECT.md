@@ -12,6 +12,8 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 **Shipped:** v1.2 OpenRouter Cost Tracking (2026-06-02) — 2 phases, 4 plans, 5 quick tasks. OpenRouter requests now persist real `usage.cost` to `requests.cost_usd` across all four response paths, replacing client-side estimates that returned `$0` for unknown models.
 
+**In progress (v1.3):** Phase 9 complete (2026-06-02) — `OpenRouterAnthropicProvider` class exists and is TDD-verified (34/34 tests) for all four high-risk overrides (URL construction, three FORK-PATCH body injections with zero cache_control injection, non-streaming + streaming cost extraction). Not yet registered/wired — downstream wiring deferred to Phases 10–12.
+
 ## Current Milestone: v1.3 OpenRouter Anthropic Messages Provider
 
 **Goal:** Add a new account type that routes to OpenRouter's native Anthropic Messages endpoint (`POST https://openrouter.ai/api/v1/messages`), passing Claude Code's requests through verbatim instead of transforming Anthropic → OpenAI chat-completions and back.
