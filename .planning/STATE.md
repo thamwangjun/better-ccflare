@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: OpenRouter Cost Tracking
 status: milestone_complete
 stopped_at: Milestone complete (Phase 08 was final phase)
-last_updated: 2026-05-31T16:00:37.169Z
-last_activity: 2026-05-31 -- Phase 08 execution started
+last_updated: 2026-06-02T10:17:55.990Z
+last_activity: 2026-06-02 — Completed quick task 260602-eax: Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause
 progress:
   total_phases: 2
   completed_phases: 2
@@ -87,6 +87,7 @@ None yet.
 | 260601-lvx | Replace inline-copy test functions with imports of real production functions | 2026-06-01 | f5ab21cb | [260601-lvx-replace-inline-copy-test-functions-with-](./quick/260601-lvx-replace-inline-copy-test-functions-with-/) |
 | 260601-m3c | Implement parseUsage on OpenRouterProvider for streaming cost extraction | 2026-06-01 | 49002d48 | [260601-m3c-implement-parseusage-on-openrouterprovid](./quick/260601-m3c-implement-parseusage-on-openrouterprovid/) |
 | 260602-8l6 | Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies | 2026-06-02 | 47703b18 | [260602-8l6-refactor-cost-02-cost-03-tests-to-exerci](./quick/260602-8l6-refactor-cost-02-cost-03-tests-to-exerci/) |
+| 260602-eax | Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause | 2026-06-02 | d3a7ac77 | [260602-eax-fix-saverequest-cost-usd-unconditional-o](./quick/260602-eax-fix-saverequest-cost-usd-unconditional-o/) |
 
 ## Session Continuity
 
