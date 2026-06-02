@@ -17,7 +17,12 @@ import model from "@dqbd/tiktoken/encoders/cl100k_base.json";
 import { init, Tiktoken } from "@dqbd/tiktoken/lite/init";
 import { EMBEDDED_TIKTOKEN_WASM } from "./embedded-tiktoken-wasm";
 import { combineChunks } from "./stream-tee";
-import { extractUsageFromData, extractUsageFromJson } from "./usage-extraction";
+import {
+	extractUsageFromData,
+	extractUsageFromJson,
+	parseSSELine,
+	resolveCostUsd,
+} from "./usage-extraction";
 import type {
 	AckMessage,
 	ChunkMessage,
@@ -228,26 +233,6 @@ function _extractSystemPrompt(requestBody: string | null): string | null {
 	}
 
 	return null;
-}
-
-// Parse SSE lines to extract usage (reuse existing logic)
-function parseSSELine(line: string): { event?: string; data?: string } {
-	// Handle both "event: message_start" and "event:message_start" formats
-	// Some providers use no space after colon, Anthropic uses space
-	if (line.startsWith("event: ") || line.startsWith("event:")) {
-		const event = line.startsWith("event: ")
-			? line.slice(7).trim()
-			: line.slice(6).trim();
-		return { event };
-	}
-	// Handle both "data: {...}" and "data:{...}" formats
-	if (line.startsWith("data: ") || line.startsWith("data:")) {
-		const data = line.startsWith("data: ")
-			? line.slice(6).trim()
-			: line.slice(5).trim();
-		return { data };
-	}
-	return {};
 }
 
 function shouldParseSSEData(data: string, eventType: string): boolean {
@@ -536,21 +521,17 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 
 		// per D-04: when the provider returned a cost via SSE (COST-02) or JSON
 		// (COST-03), use it directly; otherwise fall back to the client-side estimate.
-		if (state.usage.providerCostUsd !== undefined) {
-			// Real provider cost (possibly a genuine 0) persists unchanged.
-			state.usage.costUsd = state.usage.providerCostUsd;
-		} else {
-			// per D-04: estimateCostUSD() returns a literal 0 for unknown models.
-			// Map that estimate-$0 to undefined so the writer's `?? null` collapses
-			// it to null instead of persisting it as a real 0.
-			const est = await estimateCostUSD(state.usage.model, {
+		// estimateCostUSD() returns a literal 0 for unknown models, which
+		// resolveCostUsd maps to undefined so the writer's `?? null` collapses it
+		// to null instead of persisting it as a real 0.
+		await resolveCostUsd(state, () =>
+			estimateCostUSD(state.usage.model, {
 				inputTokens: state.usage.inputTokens,
 				outputTokens: finalOutputTokens,
 				cacheReadInputTokens: state.usage.cacheReadInputTokens,
 				cacheCreationInputTokens: state.usage.cacheCreationInputTokens,
-			});
-			state.usage.costUsd = est === 0 ? undefined : est;
-		}
+			}),
+		);
 
 		// Calculate tokens per second - zai specific vs other providers
 		if (finalOutputTokens > 0) {

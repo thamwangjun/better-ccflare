@@ -1,27 +1,11 @@
 import { describe, expect, it } from "bun:test";
-import { extractUsageFromData } from "../usage-extraction";
+import {
+	extractUsageFromData,
+	parseSSELine,
+	resolveCostUsd,
+} from "../usage-extraction";
 
 describe("Worker SSE parsing", () => {
-	// Import the functions inline to test them
-	function parseSSELine(line: string): { event?: string; data?: string } {
-		// Handle both "event: message_start" and "event:message_start" formats
-		// Some providers use no space, Anthropic uses space
-		if (line.startsWith("event: ") || line.startsWith("event:")) {
-			const event = line.startsWith("event: ")
-				? line.slice(7).trim()
-				: line.slice(6).trim();
-			return { event };
-		}
-		// Handle both "data: {...}" and "data:{...}" formats
-		if (line.startsWith("data: ") || line.startsWith("data:")) {
-			const data = line.startsWith("data: ")
-				? line.slice(6).trim()
-				: line.slice(5).trim();
-			return { data };
-		}
-		return {};
-	}
-
 	describe("parseSSELine", () => {
 		it("parses standard Anthropic format with space", () => {
 			const result = parseSSELine("event: message_start");
@@ -145,23 +129,9 @@ describe("Worker SSE parsing", () => {
 	// directly; the estimate branch maps a literal-0 estimate to undefined so
 	// the writer's `?? null` collapses an estimate-$0 to null (NOT a real 0).
 	describe("handleEnd cost gating (estimate 0 -> undefined)", () => {
-		// Mirror packages/proxy/src/post-processor.worker.ts handleEnd() gating.
+		// Exercises the real resolveCostUsd shared with the worker's handleEnd().
 		// estimateCostUSD() returns a literal 0 for unknown models (RESEARCH
 		// Finding 1), so we simulate it with a function returning 0.
-		async function resolveCostUsd(
-			state: {
-				usage: { providerCostUsd?: number; costUsd?: number };
-			},
-			estimateCostUSD: () => Promise<number>,
-		): Promise<void> {
-			if (state.usage.providerCostUsd !== undefined) {
-				state.usage.costUsd = state.usage.providerCostUsd;
-			} else {
-				const est = await estimateCostUSD();
-				state.usage.costUsd = est === 0 ? undefined : est;
-			}
-		}
-
 		it("estimate-$0 for an unknown model maps to undefined, not 0", async () => {
 			const state = { usage: { providerCostUsd: undefined } };
 			await resolveCostUsd(state, async () => 0);

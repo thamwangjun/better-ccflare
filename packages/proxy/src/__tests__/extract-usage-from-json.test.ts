@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { extractUsageFromJson } from "../usage-extraction";
+import { extractUsageFromJson, resolveCostUsd } from "../usage-extraction";
 
 describe("extractUsageFromJson", () => {
 	// COST-03: non-streaming JSON body cost extraction (per D-05)
@@ -64,18 +64,7 @@ describe("extractUsageFromJson", () => {
 	// maps to undefined (so the writer's `?? null` collapses it to null), while a
 	// real providerCostUsd === 0 survives as 0.
 	describe("handleEnd estimate 0 -> undefined guard", () => {
-		async function resolveCostUsd(
-			state: { usage: { providerCostUsd?: number; costUsd?: number } },
-			estimateCostUSD: () => Promise<number>,
-		): Promise<void> {
-			if (state.usage.providerCostUsd !== undefined) {
-				state.usage.costUsd = state.usage.providerCostUsd;
-			} else {
-				const est = await estimateCostUSD();
-				state.usage.costUsd = est === 0 ? undefined : est;
-			}
-		}
-
+		// Exercises the real resolveCostUsd shared with the worker's handleEnd().
 		it("estimate-$0 for unknown model -> costUsd undefined, not 0", async () => {
 			const state = { usage: { providerCostUsd: undefined } };
 			await resolveCostUsd(state, async () => 0);
