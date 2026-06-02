@@ -1,5 +1,36 @@
 # Milestones — better-ccflare (Personal Fork)
 
+## v1.2 — OpenRouter Cost Tracking
+
+**Shipped:** 2026-06-02
+**Phases:** 2 (Phase 7: OpenRouter Response Cost Extraction, Phase 8: Real Cost Persistence)
+**Plans:** 4 | **Quick tasks:** 5 | **Timeline:** 2 days (2026-05-31 → 2026-06-02)
+
+### Delivered
+
+Replaced unreliable client-side cost estimates (which returned `$0` for unknown OpenRouter models) with the real `usage.cost` value reported by OpenRouter. Cost is now extracted across all four response paths — non-streaming provider JSON, SSE streaming `message_delta`, the non-streaming worker body, and the live streaming response-processor — and persisted to `requests.cost_usd`. A genuine `$0` from `:free` models is preserved, while estimate-`$0` for unknown models collapses to `null`, keeping real and estimated costs distinguishable. All 4 COST requirements satisfied; milestone audit passed (4/4 requirements, 7/7 integration, 4/4 E2E flows, both phases Nyquist-compliant).
+
+### Key Accomplishments
+
+1. `OpenRouterProvider.extractUsageInfo()` extracts real `usage.cost` → `costUsd` from non-streaming JSON, `typeof === "number"` guarded so null/absent/string resolve to `undefined` (COST-01)
+2. Post-processor worker threads `providerCostUsd` from both SSE `message_delta` and non-streaming body JSON, gating `handleEnd()` over `estimateCostUSD()` (COST-02/COST-03)
+3. `extractStreamingUsage` override (clone-before-super) + `parseUsage` wiring on `OpenRouterProvider` → live streaming path returns real `usage.cost` (COST-04 streaming half)
+4. Both DB writers switched to `?? null` to persist genuine `$0`; worker maps estimate-`0 → undefined`; `COALESCE(EXCLUDED.cost_usd, requests.cost_usd)` in `ON CONFLICT` protects the live-then-worker dual write (COST-04)
+5. Extracted shared `usage-extraction.ts` module (`parseSSELine`, `resolveCostUsd`, `extractUsageFromJson`, `extractUsageFromData`) so tests exercise real production functions — eliminates inline-copy drift
+
+### Tech Debt (non-blocking, by design / out of scope)
+
+- Manual live-streaming USD-in-logs check (D-05) remains unperformed by design — requires a `:free` model force-routed to an OpenRouter account; never Anthropic/the `claude` account
+- Dashboard `$0` display gap (explicitly out of scope per REQUIREMENTS.md): `RequestDetailsModal.tsx:149` and `RequestsTab.tsx:886` filter out genuine `$0` costs. Data is correctly persisted; display layer only
+
+### Archive
+
+- Roadmap: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
+- Requirements: [milestones/v1.2-REQUIREMENTS.md](milestones/v1.2-REQUIREMENTS.md)
+- Audit: [milestones/v1.2-MILESTONE-AUDIT.md](milestones/v1.2-MILESTONE-AUDIT.md)
+
+---
+
 ## v1.1 — Extended caching for openrouter models
 
 **Shipped:** 2026-05-21

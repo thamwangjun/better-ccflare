@@ -8,15 +8,11 @@ A maintained personal fork of [better-ccflare](https://github.com/tombii/better-
 
 Stay current with upstream while running a stable personal instance enhanced with features I need — primarily around OpenRouter caching, provider selection, and a clean patch workflow.
 
-## Current Milestone: v1.2 OpenRouter Cost Tracking
+## Current State
 
-**Goal:** Capture actual usage cost from OpenRouter API responses instead of relying on client-side estimates that return $0 for unknown models.
+**Shipped:** v1.2 OpenRouter Cost Tracking (2026-06-02) — 2 phases, 4 plans, 5 quick tasks. OpenRouter requests now persist real `usage.cost` to `requests.cost_usd` across all four response paths, replacing client-side estimates that returned `$0` for unknown models.
 
-**Target features:**
-- OpenRouter provider `extractUsageInfo()` reads `usage.cost` from non-streaming response JSON
-- Post-processor worker reads `usage.cost` from SSE final chunk (streaming) and response JSON (non-streaming)
-- Skip `estimateCostUSD()` when provider-returned cost is available
-- `cost_usd` column in `requests` table populated with real USD amounts from OpenRouter
+**Next milestone goals:** Per-request OpenRouter provider selection (`x-better-ccflare-openrouter-provider` header → `provider.order` injection, deferred from v1.1) is the leading candidate. Run `/gsd-new-milestone` to define the next cycle.
 
 ## Requirements
 
@@ -35,13 +31,14 @@ Stay current with upstream while running a stable personal instance enhanced wit
 - ✓ PUT/DELETE REST endpoints for per-account provider preference management — v1.1
 - ✓ Dashboard dialog for OpenRouter accounts to set/clear provider order (gated on `account.provider === "openrouter"`) — v1.1
 - ✓ pre-merge-check.sh HIGH_RISK_FILES extended to 5 entries; 27 FORK PATCH annotations confirmed — v1.1
+- ✓ OpenRouter `extractUsageInfo()` reads `usage.cost` from non-streaming JSON and returns it as `costUsd` (typeof-guarded) — v1.2 (COST-01)
+- ✓ Post-processor worker reads `usage.cost` from SSE `message_delta` and non-streaming body JSON into `providerCostUsd` — v1.2 (COST-02/03)
+- ✓ `estimateCostUSD()` skipped when provider-returned `costUsd` is available; live streaming covered via `extractStreamingUsage`/`parseUsage` override — v1.2
+- ✓ `requests.cost_usd` populated with real OpenRouter USD amounts; genuine `$0` preserved (`?? null`), estimate-`$0` collapses to `null`, COALESCE guards dual write — v1.2 (COST-04)
 
 ### Active
 
-- [ ] **COST-01**: OpenRouter `extractUsageInfo()` reads `usage.cost` from non-streaming responses and returns it as `costUsd`
-- [ ] **COST-02**: Post-processor worker reads `usage.cost` from SSE streaming final chunks and response JSON (non-streaming)
-- [ ] **COST-03**: Skip `estimateCostUSD()` when provider-returned `costUsd` is available
-- [ ] **COST-04**: `cost_usd` column populated with real OpenRouter USD amounts in `requests` table
+(None — define next milestone via `/gsd-new-milestone`)
 
 ### Future
 
@@ -56,7 +53,7 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 ## Context
 
-**Shipped:** v1.1 (2026-05-21) — 4 phases, 11 plans, ~268 commits in 16 days.
+**Shipped:** v1.2 (2026-06-02) — 2 phases, 4 plans, 5 quick tasks in 2 days. v1.1 (2026-05-21) — 4 phases, 11 plans, ~268 commits in 16 days.
 
 **Codebase:** Bun monorepo (`apps/server`, `apps/cli`, ~15 `packages/`). Provider abstraction layer in `packages/providers/src/providers/` — each provider extends `BaseProvider` with `buildRequest()`, `parseRateLimit()`, `getUsage()`. OpenRouter lives at `packages/providers/src/providers/openrouter/`.
 
@@ -74,9 +71,17 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 **Testing constraint:** Never test via the `claude` account or direct Anthropic endpoints. Use non-Anthropic accounts (ollama, litellm, openrouter with `z-ai/glm-4.5-air:free`) and force-route with `x-better-ccflare-account-id`.
 
-**Known tech debt (v1.1):**
-- Pre-existing 27 Biome lint errors in dashboard React components (unrelated to fork patches)
-- Discard Changes dialog behavior has no formal UAT test (SC-4 gap) — testing gap only
+**Fork patches added in v1.2 (`thamw-main`):**
+- `usage.cost` extraction in `OpenRouterProvider.extractUsageInfo()` (non-streaming) + `extractStreamingUsage`/`parseUsage` overrides (live streaming) (`openrouter/provider.ts`)
+- Worker `providerCostUsd` threading from SSE `message_delta` + non-streaming body, gating `estimateCostUSD()` (`post-processor.worker.ts`)
+- Shared `usage-extraction.ts` module (`parseSSELine`, `resolveCostUsd`, `extractUsageFromJson`, `extractUsageFromData`) imported by worker + tests
+- `cost_usd` writers use `?? null` (preserve real `$0`); COALESCE in `save()` `ON CONFLICT` (`request.repository.ts`)
+
+**Known tech debt:**
+- Pre-existing 27 Biome lint errors in dashboard React components (unrelated to fork patches) — v1.1
+- Discard Changes dialog behavior has no formal UAT test (SC-4 gap) — testing gap only — v1.1
+- Manual live-streaming USD-in-logs check (D-05) unperformed by design — requires `:free` model force-routed to OpenRouter, never Anthropic/`claude` — v1.2
+- Dashboard `$0` display gap (`RequestDetailsModal.tsx:149`, `RequestsTab.tsx:886`) — out of scope; data persisted, display only — v1.2
 
 ## Constraints
 
@@ -102,6 +107,12 @@ Stay current with upstream while running a stable personal instance enhanced wit
 | `countExistingCacheControlBlocks()` extracted as module-level helper | Improves readability and testability of `transformRequestBody()`; count guard runs once before any mutation | ✓ Good |
 | No `ttl:` injected in `transformRequestBody()` — delegate to `injectSystemCacheTtl()` | Avoids double-injection on the TTL upgrade path; single source of truth for TTL logic in proxy.ts | ✓ Good |
 | Dashboard Provider Preferences dialog gated on `account.provider === "openrouter"` | Non-OpenRouter accounts show no dialog — avoids surfacing irrelevant controls | ✓ Good |
+| `typeof json.usage.cost === "number"` guard before assigning `costUsd` | Provider-controlled field; rejects null/absent/string to avoid persisting tampered/garbage cost | ✓ Good |
+| Split COST-01/02/03 (extraction, Phase 7) from COST-04 (persistence, Phase 8) | Gives a verification checkpoint — extraction testable before wiring through to the DB | ✓ Good |
+| Override `extractStreamingUsage` (clone-before-super) on OpenRouterProvider, base untouched | Live streaming path needs real `usage.cost` from final SSE chunk; super consumes the single-use body reader, so clone first | ✓ Good |
+| `?? null` (not `\|\| null`) for `cost_usd` writers; estimate-`0 → undefined` in worker | Distinguishes a genuine `$0` from `:free` models (persist as `0`) from an estimate-`$0` for unknown models (collapse to `null`) | ✓ Good |
+| `COALESCE(EXCLUDED.cost_usd, requests.cost_usd)` in `save()` ON CONFLICT | Live path writes real cost first; worker's later upsert with a failed parse (`null`) must not overwrite it | ✓ Good |
+| Extract `usage-extraction.ts` shared module imported by worker + tests | Eliminates inline-copy drift — tests exercise the exact production code path | ✓ Good |
 
 ## Evolution
 
@@ -121,4 +132,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-31 after v1.2 milestone start*
+*Last updated: 2026-06-02 after v1.2 milestone completion*

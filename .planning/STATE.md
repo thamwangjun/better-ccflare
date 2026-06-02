@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: OpenRouter Cost Tracking
-status: milestone_complete
-stopped_at: Milestone complete (Phase 08 was final phase)
-last_updated: 2026-06-02T10:17:55.990Z
-last_activity: 2026-06-02 — Completed quick task 260602-eax: Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause
+status: Awaiting next milestone
+stopped_at: Milestone v1.2 complete and archived (2026-06-02)
+last_updated: "2026-06-02T10:51:32.133Z"
+last_activity: 2026-06-02 — Milestone v1.2 completed and archived
 progress:
   total_phases: 2
   completed_phases: 2
@@ -18,19 +18,17 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-05-31 after v1.2 milestone start)
+See: `.planning/PROJECT.md` (updated 2026-06-02 after v1.2 milestone completion)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Milestone complete
+**Current focus:** Planning next milestone — run `/gsd-new-milestone` (leading candidate: per-request OpenRouter provider selection, deferred from v1.1)
 
 ## Current Position
 
-Phase: 08
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-02 - Completed quick task 260602-8l6: Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies
-
-Progress: [███████━━━] 75%
+Phase: Milestone v1.2 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-06-02 — Milestone v1.2 completed and archived
 
 ## Performance Metrics
 
@@ -94,3 +92,7 @@ None yet.
 Last session: 2026-05-31T15:58:54.555Z
 Stopped at: context exhaustion at 76% (2026-05-31)
 Resume file: None
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone

@@ -101,14 +101,65 @@
 
 ---
 
+## Milestone: v1.2 — OpenRouter Cost Tracking
+
+**Shipped:** 2026-06-02
+**Phases:** 2 | **Plans:** 4 | **Quick tasks:** 5 | **Timeline:** 2 days (2026-05-31 → 2026-06-02)
+
+### What Was Built
+
+- `OpenRouterProvider.extractUsageInfo()` extracts real `usage.cost` → `costUsd` from non-streaming JSON, `typeof === "number"` guarded
+- Post-processor worker threads `providerCostUsd` from SSE `message_delta` and non-streaming body JSON, gating `handleEnd()` over `estimateCostUSD()`
+- `extractStreamingUsage` override (clone-before-super) + `parseUsage` wiring so the live streaming path returns real `usage.cost`
+- Both DB writers switched to `?? null` (preserve genuine `$0`); worker maps estimate-`0 → undefined`; `COALESCE` in `save()` `ON CONFLICT` protects the live-then-worker dual write
+- Shared `usage-extraction.ts` module so tests exercise real production functions instead of inline copies
+
+### What Worked
+
+- **Phase split at the verification boundary:** Separating extraction (Phase 7, COST-01/02/03) from persistence (Phase 8, COST-04) gave a clean checkpoint — cost extraction was provably correct before any DB write was wired.
+- **typeof guards on provider-controlled fields:** Treating `usage.cost` as untrusted input (reject null/absent/string) was applied uniformly across all four extraction sites, making the test matrix mechanical (number / 0 / null / absent / string) and consistent.
+- **The audit gate caught real integration gaps:** Three re-audit cycles surfaced two genuine defects that phase verification missed — the live-streaming `parseUsage` gap and the `saveRequest` `ON CONFLICT` null-overwrite. The milestone did not close until both were fixed.
+- **Quick tasks for hardening:** The five quick tasks (parseUsage wiring, COALESCE fix, two test-refactors, one inline-copy removal) were the right scope — surgical fixes to a shipped phase without re-opening the full plan machinery.
+
+### What Was Inefficient
+
+- **Streaming half of COST-04 was missed in initial planning:** Phase 8's plan covered the worker/persistence path but not the *live* streaming response-processor path, which needed a separate `extractStreamingUsage`/`parseUsage` override. It was caught at audit and closed via quick task `260601-m3c` — should have been in the Phase 8 plan from the start. Streaming and non-streaming are always separate code paths; both belong in scope together.
+- **Dual-write null-overwrite found late:** The `save()` `ON CONFLICT` unconditionally overwrote `cost_usd`, so a worker upsert with a failed parse could null out the real cost the live path had already written. This is an inherent risk of the live-then-worker dual-write pattern and should have been a design consideration in Phase 8, not an audit finding (quick task `260602-eax`).
+- **Inline-copy test drift:** Tests initially copied worker logic inline rather than importing it, so they could pass while production drifted. Required two refactor quick tasks (`260601-lvx`, `260602-8l6`) to extract `usage-extraction.ts` and point tests at real functions.
+
+### Patterns Established
+
+- **clone-before-super for single-use response bodies:** `clone.clone()` before delegating to `super.extractStreamingUsage()` — the base consumes the one-shot body reader, so capture your own copy first.
+- **`?? null` vs `|| null` to distinguish a real `0` from absent:** cost columns use `?? null` (a genuine `$0` is meaningful); token columns keep `|| null` (0 and absent are equivalent).
+- **estimate-`0 → undefined` upstream:** map `estimateCostUSD()`'s literal `0`-for-unknown-models to `undefined` in the worker so `?? null` collapses it to `null` rather than masquerading as a real `$0`.
+- **`COALESCE(EXCLUDED.col, table.col)` in `ON CONFLICT`:** the default null-overwrite guard for any column written by two paths (live + deferred worker).
+- **Shared pure-function module imported by both worker and tests:** the durable fix for inline-copy drift — there is exactly one code path, and the tests run it.
+
+### Key Lessons
+
+1. **Scope streaming and non-streaming together.** Every cost/usage feature has (at least) a live streaming path, a worker streaming path, and a non-streaming path. Enumerate all of them in the plan; the live streaming path is the easiest to forget because it bypasses the worker.
+2. **Dual-write patterns need explicit null-overwrite protection at the DB layer.** When a live path and a deferred worker both upsert the same row, design the `ON CONFLICT` clause defensively (`COALESCE`) up front — don't wait for the race to surface as lost data.
+3. **Tests must import production code, not copy it.** An inline copy passes forever while production rots. If a test re-implements logic, extract that logic to a shared module first.
+4. **A strong audit gate substitutes for thinner phase verification — but at a cost.** Three re-audit cycles found two real defects, which is the gate working. But each was a fix-then-re-audit round trip; catching them in phase verification (with the all-paths-enumerated lesson above) would have been cheaper.
+
+### Cost Observations
+
+- Model mix: Opus (planner/executor/verifier/auditor per model_overrides) + Sonnet for lighter steps
+- Sessions: ~6 (2 phase executions + 3 audit cycles + quick-task batch)
+- Notable: 5 quick tasks vs 4 plans — an unusually high hardening-to-plan ratio, reflecting defects surfaced by the audit gate rather than planned work
+
+---
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Days | Requirements |
 |-----------|--------|-------|------|--------------|
 | v1.0 | 2 | 4 | 2 | 7/7 |
 | v1.1 | 4 | 11 | 16 | 9/9 |
+| v1.2 | 2 | 4 | 2 | 4/4 |
 
 **Trends:**
-- Plans per phase growing (v1.0: 2.0 avg → v1.1: 2.75 avg) — TDD RED+GREEN split accounts for most of this; expected for feature work vs correctness fixes
-- Days per plan stable (~0.5 days v1.0, ~1.5 days v1.1) — v1.1 plans were larger scope with more cross-cutting type changes
-- Requirements satisfaction: 100% both milestones — audit gate is working
+- Plans per phase: v1.0 2.0 → v1.1 2.75 → v1.2 2.0 — v1.2 was a tightly-scoped 2-phase feature; the *real* work overflow landed in 5 quick tasks rather than additional plans
+- Days per plan: ~0.5 (v1.0) → ~1.5 (v1.1) → ~0.5 (v1.2) — v1.2 plans were small and surgical, like v1.0 correctness fixes
+- Requirements satisfaction: 100% across all three milestones — audit gate continues to hold
+- **Emerging signal:** v1.2's 5 quick tasks (vs 1 in v1.0, ~1 in v1.1) all closed audit-found gaps. The audit is catching what phase verification misses — particularly multi-code-path features (streaming vs non-streaming) and cross-write data integrity
