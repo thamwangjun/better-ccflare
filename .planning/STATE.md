@@ -2,11 +2,11 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: OpenRouter Anthropic Messages Provider
-status: planning
-last_updated: "2026-06-02T11:02:36.727Z"
+status: roadmap_created
+last_updated: "2026-06-02T00:00:00.000Z"
 last_activity: 2026-06-02
 progress:
-  total_phases: 0
+  total_phases: 4
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,14 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-06-02 after v1.2 milestone completion)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Planning next milestone — run `/gsd-new-milestone` (leading candidate: per-request OpenRouter provider selection, deferred from v1.1)
+**Current focus:** v1.3 OpenRouter Anthropic Messages Provider — roadmap created, ready to plan Phase 9
 
 ## Current Position
 
-Phase: Not started (defining requirements)
+Phase: Phase 9 (not started)
 Plan: —
-Status: Defining requirements
-Last activity: 2026-06-02 — Milestone v1.3 started
+Status: Roadmap created — ready for `/gsd-plan-phase 9`
+Last activity: 2026-06-02 — v1.3 roadmap created (Phases 9–12)
 
 ## Performance Metrics
 
@@ -49,6 +49,10 @@ Last activity: 2026-06-02 — Milestone v1.3 started
 | 06 | 4 | — | — |
 | 07 | 2 | - | - |
 | 08 | 2 | - | - |
+| 09 | ? | - | - |
+| 10 | ? | - | - |
+| 11 | ? | - | - |
+| 12 | ? | - | - |
 
 **Recent Trend:**
 
@@ -67,14 +71,17 @@ Recent decisions affecting current work:
 - [Phase 7–8 split]: COST-01/02/03 are grouped in Phase 7 (provider + worker cost extraction from all response paths); COST-04 is Phase 8 (skip estimate, persist). Splitting at this boundary gives a verification checkpoint — cost extraction can be tested before wiring through to persistence.
 - Provider-level cost extraction (COST-01) in `extractUsageInfo()` flows into the proxy context; worker-level extraction (COST-02, COST-03) handles the two response paths (SSE streaming final chunk vs. non-streaming body JSON)
 - COST-04 is the integration point in `pricing.ts` — skip `estimateCostUSD()` when `costUsd` is already available from the provider/worker chain
+- [v1.3 ARCHITECTURE.md vs SUMMARY.md conflict]: ARCHITECTURE.md (earlier draft) claimed SSE sniffer needs no change and streaming cost has no `cost` field. SUMMARY.md (later, with empirical probe confirmation) corrects both: streaming cost IS present in native endpoint's final `message_delta` (empirically confirmed 2026-06-02); `ANTHROPIC_SHAPE_PROVIDERS` DOES need extending; port `readFinalSseCost()` from `OpenRouterProvider`. SUMMARY.md positions are authoritative.
+- [v1.3 Phase 9 scope]: ROUTE-02 (`session_id` injection) and COST-01/02 (real cost extraction) map to Phase 9 because they are implemented directly in the provider class overrides (`transformRequestBody`, `extractUsageInfo`, `extractStreamingUsage`). FAIL-01 moved to Phase 10 — it lives in `sse-rate-limit-sniffer.ts`, a separate file from the provider class, and belongs with the wiring phase.
 
 ### Pending Todos
 
-None yet.
+- Verify `z-ai/glm-4.5-air:free` model availability on `/api/v1/messages` native endpoint (confirm before writing Phase 9 unit tests)
+- Confirm whether `usage:{include:true}` must be injected in `transformRequestBody()` or if cost is returned by default on the native endpoint (one-time live check)
 
 ### Blockers/Concerns
 
-None yet.
+None.
 
 ### Quick Tasks Completed
 
@@ -88,10 +95,11 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-05-31T15:58:54.555Z
-Stopped at: context exhaustion at 76% (2026-05-31)
+Last session: 2026-06-02
+Stopped at: roadmap creation complete
 Resume file: None
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Run `/gsd-plan-phase 9` to plan Phase 9: Provider Class + Unit Tests
+- Before writing Phase 9 unit tests: verify `z-ai/glm-4.5-air:free` availability on `/api/v1/messages` and confirm `usage:{include:true}` injection requirement

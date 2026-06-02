@@ -69,26 +69,26 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROV-01 | TBD | Pending |
-| PROV-02 | TBD | Pending |
-| PROV-03 | TBD | Pending |
-| CACHE-01 | TBD | Pending |
-| ROUTE-01 | TBD | Pending |
-| ROUTE-02 | TBD | Pending |
-| COST-01 | TBD | Pending |
-| COST-02 | TBD | Pending |
-| FAIL-01 | TBD | Pending |
-| OBS-01 | TBD | Pending |
-| MGMT-01 | TBD | Pending |
-| MGMT-02 | TBD | Pending |
-| MGMT-03 | TBD | Pending |
-| MGMT-04 | TBD | Pending |
+| PROV-01 | Phase 9 | Pending |
+| PROV-02 | Phase 9 | Pending |
+| PROV-03 | Phase 9 | Pending |
+| CACHE-01 | Phase 9 | Pending |
+| ROUTE-01 | Phase 9 | Pending |
+| ROUTE-02 | Phase 9 | Pending |
+| COST-01 | Phase 9 | Pending |
+| COST-02 | Phase 9 | Pending |
+| FAIL-01 | Phase 10 | Pending |
+| OBS-01 | Phase 10 | Pending |
+| MGMT-01 | Phase 10 | Pending |
+| MGMT-02 | Phase 10 | Pending |
+| MGMT-03 | Phase 11 | Pending |
+| MGMT-04 | Phase 11 | Pending |
 
 **Coverage:**
 - v1.3 requirements: 14 total
-- Mapped to phases: 0 (pending roadmap)
-- Unmapped: 14 ⚠️
+- Mapped to phases: 14 ✓
+- Unmapped: 0 ✓
 
 ---
 *Requirements defined: 2026-06-02*
-*Last updated: 2026-06-02 after initial definition*
+*Last updated: 2026-06-02 after roadmap creation (v1.3 phases 9–12)*
