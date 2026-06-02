@@ -524,8 +524,11 @@ async function handleEnd(msg: EndMessage): Promise<void> {
 		// estimateCostUSD() returns a literal 0 for unknown models, which
 		// resolveCostUsd maps to undefined so the writer's `?? null` collapses it
 		// to null instead of persisting it as a real 0.
+		// Capture the narrowed model so the closure preserves the `if (state.usage.model)`
+		// narrowing (a closure would otherwise widen it back to string | undefined).
+		const model = state.usage.model;
 		await resolveCostUsd(state, () =>
-			estimateCostUSD(state.usage.model, {
+			estimateCostUSD(model, {
 				inputTokens: state.usage.inputTokens,
 				outputTokens: finalOutputTokens,
 				cacheReadInputTokens: state.usage.cacheReadInputTokens,
