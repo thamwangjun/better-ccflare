@@ -22,6 +22,46 @@ export interface UsageExtractionState {
 	providerFinalOutputTokens?: number;
 }
 
+// Parse SSE lines to extract event/data (shared with the post-processor worker)
+export function parseSSELine(line: string): { event?: string; data?: string } {
+	// Handle both "event: message_start" and "event:message_start" formats
+	// Some providers use no space after colon, Anthropic uses space
+	if (line.startsWith("event: ") || line.startsWith("event:")) {
+		const event = line.startsWith("event: ")
+			? line.slice(7).trim()
+			: line.slice(6).trim();
+		return { event };
+	}
+	// Handle both "data: {...}" and "data:{...}" formats
+	if (line.startsWith("data: ") || line.startsWith("data:")) {
+		const data = line.startsWith("data: ")
+			? line.slice(6).trim()
+			: line.slice(5).trim();
+		return { data };
+	}
+	return {};
+}
+
+/**
+ * Cost-gating logic shared with the worker's handleEnd() (per D-04): when the
+ * provider returned a cost via SSE (COST-02) or JSON (COST-03), use it directly
+ * (a genuine 0 persists); otherwise fall back to the injected client-side
+ * estimate. estimateCostUSD() returns a literal 0 for unknown models, so map an
+ * estimate-$0 to undefined so the writer's `?? null` collapses it to null
+ * instead of persisting it as a real 0.
+ */
+export async function resolveCostUsd(
+	state: UsageExtractionState,
+	estimateCostUSD: () => Promise<number>,
+): Promise<void> {
+	if (state.usage.providerCostUsd !== undefined) {
+		state.usage.costUsd = state.usage.providerCostUsd;
+	} else {
+		const est = await estimateCostUSD();
+		state.usage.costUsd = est === 0 ? undefined : est;
+	}
+}
+
 // Extract usage data from non-stream JSON response bodies
 export function extractUsageFromJson(
 	json: {
