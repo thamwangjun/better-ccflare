@@ -9,9 +9,23 @@
 
 v1.3 adds a single new account/provider type (`openrouter-anthropic`) that routes Claude Code's native Anthropic Messages requests to OpenRouter's native `/api/v1/messages` endpoint. Unlike the existing `openrouter` provider — which translates Anthropic Messages to OpenAI Chat Completions and back — this new type is a true passthrough: request bodies arrive at OpenRouter verbatim, preserving `cache_control` blocks, `thinking` config, `context_management.edits`, and all other native-Anthropic fields without shape transformation. The infrastructure for this is almost entirely already in place from v1.1–v1.2: the DB column for provider preferences, the cost chain (`resolveCostUsd`, COALESCE ON CONFLICT), and the SSE streaming infrastructure all carry forward without modification. The implementation is bounded: one new class in `packages/providers/`, four overrides, and a propagation of the `"openrouter-anthropic"` mode string through eleven files across six packages.
 
-The recommended approach is to extend `AnthropicCompatibleProvider` (not `OpenRouterProvider`) and override only four methods: `getEndpoint()`, `buildUrl()` (copy verbatim from `OpenRouterProvider` to avoid the double-segment path bug), `transformRequestBody()` (inject `body.provider` from `openrouter_provider_preference`; zero `cache_control` injection), and `extractUsageInfo()` / `extractStreamingUsage()` (call `super`, then attach `usage.cost` on non-streaming; return `costUsd: undefined` on streaming — cost is absent from all SSE events on this endpoint). The "blast radius" is predictable and grep-verifiable: every file containing the string `"openrouter"` as a mode or provider literal must gain a sibling `"openrouter-anthropic"` entry.
+The recommended approach is to extend `AnthropicCompatibleProvider` (not `OpenRouterProvider`) and override the cost/routing methods: `getEndpoint()`, `buildUrl()` (copy verbatim from `OpenRouterProvider` to avoid the double-segment path bug), `transformRequestBody()` (inject `body.provider` from `openrouter_provider_preference`; zero `cache_control` injection), and `extractUsageInfo()` / `extractStreamingUsage()` / `parseUsage()` (call `super`, then attach the real `usage.cost`). **Both streaming and non-streaming must surface OpenRouter's real `usage.cost`, mirroring v1.2.** v1.2's existing `openrouter` provider reads `usage.cost` from the final SSE `message_delta` event for streaming (`readFinalSseCost()` in `openrouter/provider.ts`) and from `usage.cost` for non-streaming — there is NO estimate fallback for streaming, and the new provider must preserve that. The cost-extraction overrides (`parseUsage`, `extractStreamingUsage`, `readFinalSseCost`) should be ported from `OpenRouterProvider` to the new class. The "blast radius" is predictable and grep-verifiable: every file containing the string `"openrouter"` as a mode or provider literal must gain a sibling `"openrouter-anthropic"` entry.
 
-The primary risk is the streaming cost gap: the OpenRouter native Anthropic Messages endpoint has no `cost` field in any SSE event (confirmed from the OpenRouter OpenAPI spec). Streaming costs will fall back to `estimateCostUSD()`, persisting either a token-estimate figure or null for unknown models — identical to the existing `openrouter` provider's fallback behavior. This is acceptable for v1.3 and must be explicitly documented in code. A secondary risk is the breadth of type-union propagation: missing even one of the eleven registration sites causes a silent mismatch (wrong DB value, 404 from dashboard, missing UI button). The mitigation is a single grep check after wiring: `grep -rn '"openrouter"' packages/ --include="*.ts" | grep -v test | grep -v "openrouter-anthropic"` should produce no hits that need a parallel entry.
+**Correction to earlier draft (now EMPIRICALLY CONFIRMED):** an earlier version of this summary claimed the native endpoint's SSE stream carries no `cost` field (inferred from the undocumented `MessagesDeltaEvent.usage` schema in `openapi.yaml`) and therefore streaming cost would fall back to `estimateCostUSD()`. That was a faulty inference.
+
+**Empirical confirmation (2026-06-02, real billed request to `deepseek/deepseek-v4-flash` via `probe-streaming-cost.sh`):** the native `/api/v1/messages` STREAMING endpoint DOES deliver cost in the final `event: message_delta`. Captured `usage` object:
+```json
+{"input_tokens":7,"output_tokens":32,"output_tokens_details":{"thinking_tokens":32},
+ "cache_creation_input_tokens":null,"cache_read_input_tokens":4,"server_tool_use":null,
+ "service_tier":null,"speed":"standard","cost":0.0000070581,"is_byok":false,
+ "cost_details":{"upstream_inference_cost":0.0000070581,
+   "upstream_inference_prompt_cost":7.669e-7,"upstream_inference_completions_cost":0.0000062912}}
+```
+This is the same `message_delta` event v1.2's `readFinalSseCost()` already parses, and the cache token field names (`cache_creation_input_tokens`/`cache_read_input_tokens`) match what the `AnthropicCompatibleProvider` base class reads. The new provider extracts real cost on both streaming and non-streaming — mirroring v1.2.
+
+**Implementation note — `usage:{include:true}` opt-in:** the probe sent `"usage":{"include":true}` in the request body. v1.2's existing `openrouter` provider does NOT inject this. To guarantee `cost` appears, the new provider should inject `usage:{include:true}` in `transformRequestBody()` (FORK PATCH, since Claude Code won't send it). Open micro-question for Phase 1: re-run the probe WITHOUT that line to determine whether cost is returned by default on the native endpoint (if so, injection is belt-and-suspenders rather than required).
+
+The primary risk is therefore the breadth of type-union propagation: missing even one of the eleven registration sites causes a silent mismatch (wrong DB value, 404 from dashboard, missing UI button). The mitigation is a single grep check after wiring: `grep -rn '"openrouter"' packages/ --include="*.ts" | grep -v test | grep -v "openrouter-anthropic"` should produce no hits that need a parallel entry.
 
 ---
 
@@ -33,7 +47,7 @@ No new npm dependencies are required. The implementation is pure TypeScript usin
 **Must have (table stakes):**
 - Correct endpoint routing to `https://openrouter.ai/api/v1/messages` with `Authorization: Bearer` auth
 - Verbatim request passthrough (no `cache_control` injection — Claude Code sends its own blocks)
-- Cost tracking from `usage.cost` on non-streaming responses (typeof-guarded, real USD value)
+- Cost tracking from real `usage.cost` on BOTH streaming (final SSE `message_delta`) and non-streaming responses (typeof-guarded), mirroring v1.2 — no estimate fallback for streaming
 - Provider preference injection via existing `openrouter_provider_preference` column
 - Dashboard provider-preference dialog gate widened to include `"openrouter-anthropic"`
 - CLI `--add-account --mode openrouter-anthropic` registration
@@ -70,31 +84,17 @@ The integration is additive and bounded. The new class slots into the existing p
 
 5. **SSE rate-limit sniffer not extended** — `ANTHROPIC_SHAPE_PROVIDERS` does not include `"openrouter-anthropic"`; `overloaded_error` mid-stream frames are ignored; overloaded accounts continue receiving requests without failover. Prevention: one-line addition to `sse-rate-limit-sniffer.ts` with unit test.
 
-6. **Streaming cost decision (open, requires requirements decision)** — see DECISION POINT section below.
+6. **Porting the wrong streaming-cost behavior** — the new provider must REUSE v1.2's real-cost extraction, not invent an estimate fallback. Port `parseUsage()`, `extractStreamingUsage()`, and `readFinalSseCost()` from `OpenRouterProvider` so streaming surfaces the real `usage.cost` from the final SSE `message_delta`. Do NOT return `costUsd: undefined` to trigger `estimateCostUSD()` for streaming — that would regress v1.2's real-cost behavior. (Note: do not blindly extend `OpenRouterProvider` to get this — it also carries the cache_control injector and OAI-format token reads; copy only the cost methods onto the `AnthropicCompatibleProvider` subclass.)
 
 ---
 
-## DECISION POINT: Streaming Cost Strategy
+## Streaming Cost: Resolved (mirror v1.2)
 
-This is the primary unresolved design question. Requirements must decide before implementation begins.
+An earlier draft framed streaming cost as an open "estimate vs. null" decision built on the assumption that the native endpoint emits no `cost` in its SSE stream. **That premise was wrong and the question is closed.** v1.2's `openrouter` provider already extracts the real `usage.cost` from the final streaming `message_delta` event (`readFinalSseCost()`), and the new provider must do the same. OpenRouter's `usage.cost` is a platform usage-accounting extension delivered on the final streaming event regardless of endpoint shape; the `openapi.yaml` Anthropic-Messages schema simply doesn't document it.
 
-**Context:** The OpenRouter native Anthropic Messages endpoint has no `cost` field in any SSE event (confirmed HIGH confidence from OpenRouter OpenAPI spec, `MessagesDeltaEvent.usage` schema). Cost is only available in non-streaming JSON responses. All real Claude Code usage is streaming.
+**Implementation:** Port `parseUsage()` / `extractStreamingUsage()` / `readFinalSseCost()` from `OpenRouterProvider` to the new `AnthropicCompatibleProvider` subclass (clone-before-super for the streaming reader, `typeof === "number"` guard on cost, `// FORK PATCH:` annotation). Real cost on both streaming and non-streaming; the v1.2 worker chain (`resolveCostUsd`, COALESCE) persists it unchanged.
 
-**Option A — Accept estimateCostUSD() fallback (recommended)**
-- `extractStreamingUsage()` returns `costUsd: undefined` explicitly.
-- `resolveCostUsd()` in the post-processor worker receives `providerCostUsd = undefined`, falls through to `estimateCostUSD()`.
-- For unknown models, `estimateCostUSD()` returns 0, `resolveCostUsd` maps to `undefined`, DB writer writes `null`.
-- For known models, a token-estimate dollar figure is persisted.
-- Behavior is identical to the existing `openrouter` provider.
-- Must be documented with a `// FORK PATCH:` comment.
-
-**Option B — Persist honest null (suppress estimate)**
-- Override `extractStreamingUsage()` to also suppress the `estimateCostUSD()` path by returning a sentinel that the worker interprets as "do not estimate."
-- Requires modifying the post-processor worker's `resolveCostUsd()` logic — a larger change than Option A.
-- Avoids misleading estimated costs on real-money accounts.
-- Higher implementation complexity; breaks the worker's clean abstraction.
-
-**Recommended resolution:** Accept Option A (the existing fallback chain behavior). Document clearly with a `// FORK PATCH:` comment. Revisit when OpenRouter adds `cost` to native Messages SSE events. Empirically verify with an integration test that non-streaming requests DO produce real cost values.
+**Only remaining empirical task:** confirm the native `/api/v1/messages` final SSE event actually carries `usage.cost` (integration test, Phase 4) — strong default that it does, since it's the same platform feature v1.2 relies on.
 
 ---
 
@@ -137,8 +137,8 @@ Consolidated from ARCHITECTURE.md and PITFALLS.md. Every `"openrouter"` literal 
 ### Phase 1: Provider Class + Unit Tests
 **Rationale:** Everything else depends on the provider class existing and behaving correctly. The four high-risk method overrides (buildUrl, transformRequestBody, extractUsageInfo, extractStreamingUsage) must be unit-tested before any integration wiring begins. A wrong parent class choice or incorrect buildUrl would cause all-requests-fail or silent data corruption that is harder to diagnose once the full stack is wired.
 **Delivers:** `OpenRouterAnthropicProvider` class with passing unit tests covering all pitfall scenarios; provider barrel and index exports.
-**Addresses:** Endpoint routing, Bearer auth, cost tracking (non-streaming), cache field reading, streaming cost null behavior.
-**Avoids:** Pitfalls 1 (readFinalSseCost), 2 (wrong parent), 3 (OAI-format fields), 7 (buildUrl double-segment).
+**Addresses:** Endpoint routing, Bearer auth, real cost tracking on BOTH streaming (ported `readFinalSseCost`) and non-streaming, cache field reading.
+**Avoids:** Pitfalls 2 (wrong parent), 3 (OAI-format fields), 6 (wrong streaming-cost behavior), 7 (buildUrl double-segment).
 **Research flag:** None — patterns are well-documented. Test model on `/api/v1/messages` must be verified before tests are written.
 
 ### Phase 2: Type Wiring + CLI + HTTP API + SSE Sniffer
@@ -156,8 +156,8 @@ Consolidated from ARCHITECTURE.md and PITFALLS.md. Every `"openrouter"` literal 
 **Research flag:** None — mechanical propagation.
 
 ### Phase 4: Integration Test + Verification
-**Rationale:** End-to-end validation via a real (`:free` model, non-Anthropic, force-routed) request through the full proxy stack. Must confirm: cost persists correctly for non-streaming, cost is null/estimated for streaming, cache token fields are populated, provider preference injection fires, account failover on overload.
-**Delivers:** Confidence the full stack works together; streaming cost decision empirically confirmed; `usage.cost` field presence on non-streaming responses verified.
+**Rationale:** End-to-end validation via a real (`:free` model, non-Anthropic, force-routed) request through the full proxy stack. Must confirm: real cost persists for BOTH streaming and non-streaming, cache token fields are populated, provider preference injection fires, account failover on overload.
+**Delivers:** Confidence the full stack works together; empirical confirmation that the native `/api/v1/messages` final SSE event carries `usage.cost` (streaming) and the non-streaming body carries `usage.cost`.
 **Uses:** `x-better-ccflare-account-id` header + non-Anthropic `:free` model (availability on `/api/v1/messages` confirmed at Phase 1 start).
 **Avoids:** Pitfalls 10 (Anthropic ban risk), 11 (test model unavailable on native endpoint).
 **Research flag:** Verify at Phase 1 start which `:free` model is available on `/api/v1/messages`. `z-ai/glm-4.5-air:free` is the established safe model for the OAI-format provider but native endpoint availability must be confirmed. Document chosen model in Phase 4 plan.
@@ -185,7 +185,7 @@ Phases with standard patterns (skip research-phase):
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Primary source: OpenRouter OpenAPI spec fetched 2026-06-02. `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent` schemas verified. No-cost-in-SSE confirmed from spec schema. |
+| Stack | HIGH | Primary source: OpenRouter OpenAPI spec fetched 2026-06-02. `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent` schemas verified. NOTE: the documented SSE schema omits `cost`, but this is NOT evidence the field is absent at runtime — OpenRouter's `usage.cost` is an undocumented platform extension that v1.2 already reads from the final streaming event; confirm empirically in Phase 4. |
 | Features | HIGH | OpenRouter docs (endpoint schema, caching guide, provider routing, router metadata) fetched directly. MVP feature set is minimal and all dependencies already shipped in v1.1–v1.2. |
 | Architecture | HIGH | Direct codebase inspection with grep-backed enumeration of all `"openrouter"` literal sites. Every registration location confirmed with line numbers. |
 | Pitfalls | HIGH | All 11 pitfalls are grounded in specific codebase inspection (line numbers, method names) and OpenRouter spec schema details. No inference-only entries in the critical category. |
@@ -194,9 +194,9 @@ Phases with standard patterns (skip research-phase):
 
 ### Gaps to Address
 
-- **Streaming cost decision:** Whether to suppress `estimateCostUSD()` fallback for streaming on `openrouter-anthropic` accounts, or accept it. Recommendation: accept the existing fallback chain (Option A). Must be explicitly decided in requirements and documented in code.
+- **Streaming cost: resolved, not open.** Mirror v1.2 — port `readFinalSseCost()`/`extractStreamingUsage()`/`parseUsage()` so streaming surfaces the real `usage.cost`. No estimate-vs-null decision needed. (Earlier draft's "no cost in SSE" claim was a faulty inference from the undocumented openapi.yaml schema.)
 - **Test model availability on `/api/v1/messages`:** `z-ai/glm-4.5-air:free` confirmed for OAI-format endpoint; native endpoint availability unverified. Resolve at Phase 1 start via a one-time live check using an `openrouter-anthropic` account with `x-better-ccflare-account-id`.
-- **`usage.cost` field empirical verification:** STACK.md spec-based confidence is HIGH, but the spec shows `cost: number | null` — `null` is valid. Empirical verification with a real non-streaming response confirms that `cost` is consistently non-null in practice. Use the Phase 4 integration test for this.
+- **`usage.cost` field empirical verification (streaming + non-streaming):** confirm the native endpoint's final SSE `message_delta` carries `usage.cost` (streaming) and the non-streaming body carries it too. Strong default: yes, since it's the same OpenRouter usage-accounting feature v1.2 already relies on. Confirm in the Phase 4 integration test.
 - **`session_id` injection:** Deferred to v1.3.x. If included, requires deriving a stable session token from connection/account context — not researched in depth.
 
 ---
@@ -204,7 +204,7 @@ Phases with standard patterns (skip research-phase):
 ## Sources
 
 ### Primary (HIGH confidence)
-- `https://openrouter.ai/openapi.yaml` (fetched 2026-06-02) — `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent`, `MessagesStopEvent`, `ProviderPreferences` schemas; no `cost` field in SSE confirmed
+- `https://openrouter.ai/openapi.yaml` (fetched 2026-06-02) — `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent`, `MessagesStopEvent`, `ProviderPreferences` schemas. The SSE schemas omit `cost`, but this is an undocumented platform extension (see usage-accounting docs) — schema absence ≠ runtime absence; verify empirically.
 - Direct codebase reading (2026-06-02) — `base-anthropic-compatible.ts`, `openrouter/provider.ts`, `anthropic-compatible/provider.ts`, `provider-config.ts`, `account.ts`, `accounts.ts`, `router.ts`, `AccountAddForm.tsx`, `AccountListItem.tsx`, `sse-rate-limit-sniffer.ts`, `usage-extraction.ts`, `post-processor.worker.ts`
 - Grep-backed enumeration of all `"openrouter"` literal sites across `packages/**`
 
