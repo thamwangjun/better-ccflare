@@ -12,7 +12,18 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 **Shipped:** v1.2 OpenRouter Cost Tracking (2026-06-02) — 2 phases, 4 plans, 5 quick tasks. OpenRouter requests now persist real `usage.cost` to `requests.cost_usd` across all four response paths, replacing client-side estimates that returned `$0` for unknown models.
 
-**Next milestone goals:** Per-request OpenRouter provider selection (`x-better-ccflare-openrouter-provider` header → `provider.order` injection, deferred from v1.1) is the leading candidate. Run `/gsd-new-milestone` to define the next cycle.
+## Current Milestone: v1.3 OpenRouter Anthropic Messages Provider
+
+**Goal:** Add a new account type that routes to OpenRouter's native Anthropic Messages endpoint (`POST https://openrouter.ai/api/v1/messages`), passing Claude Code's requests through verbatim instead of transforming Anthropic → OpenAI chat-completions and back.
+
+**Target features:**
+- New `openrouter-anthropic` mode/provider extending `base-anthropic-compatible`, pointed at `https://openrouter.ai/api/v1/messages` with `Authorization: Bearer` auth — **coexists** with the existing OpenAI-format `openrouter` provider (left unchanged)
+- Native `cache_control` passthrough (5m/1h ttl) — no breakpoint-injection hacks needed
+- Provider preference injection — reuse the existing per-account `openrouter_provider_preference` to inject `body.provider = { order, allow_fallbacks }` (native endpoint supports the `provider` extension directly)
+- Cost tracking — persist real cost to `requests.cost_usd` from the native Anthropic usage object (exact cost-field shape on this endpoint is an open question → research)
+- Dashboard management — provider-order dialog gated on the new provider type
+
+**Why:** Passthrough fidelity (Claude Code already speaks Anthropic Messages), native prompt caching, cleaner upstream merges (isolate OpenRouter logic off the shared OpenAI provider), and access to native-only features (thinking modes, output_config, server tools).
 
 ## Requirements
 
@@ -38,7 +49,13 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 ### Active
 
-(None — define next milestone via `/gsd-new-milestone`)
+<!-- v1.3 OpenRouter Anthropic Messages Provider — see REQUIREMENTS.md for REQ-IDs -->
+
+- [ ] New `openrouter-anthropic` provider/mode → OpenRouter native Anthropic Messages endpoint, coexisting with the OpenAI-format `openrouter`
+- [ ] Native `cache_control` passthrough (5m/1h ttl) on the new provider
+- [ ] Provider preference injection reusing `openrouter_provider_preference` on the new provider
+- [ ] Cost tracking persisted to `requests.cost_usd` from the native Anthropic usage object
+- [ ] Dashboard provider-order dialog gated on the new provider type
 
 ### Future
 
@@ -132,4 +149,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-02 after v1.2 milestone completion*
+*Last updated: 2026-06-02 after starting milestone v1.3*
