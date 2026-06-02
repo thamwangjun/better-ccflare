@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-05-31 after v1.2 milestone start)
 Phase: 08
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-06-01 - Completed quick task 260601-m3c: Implement parseUsage on OpenRouterProvider for streaming cost extraction
+Last activity: 2026-06-02 - Completed quick task 260602-8l6: Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies
 
 Progress: [███████━━━] 75%
 
@@ -86,6 +86,7 @@ None yet.
 | 260531-l6i | Trim CLAUDE.md, keep important parts, remove redundant parts | 2026-05-31 | 58324d3f | [260531-l6i-trim-claude-md-keep-important-parts-remo](./quick/260531-l6i-trim-claude-md-keep-important-parts-remo/) |
 | 260601-lvx | Replace inline-copy test functions with imports of real production functions | 2026-06-01 | f5ab21cb | [260601-lvx-replace-inline-copy-test-functions-with-](./quick/260601-lvx-replace-inline-copy-test-functions-with-/) |
 | 260601-m3c | Implement parseUsage on OpenRouterProvider for streaming cost extraction | 2026-06-01 | 49002d48 | [260601-m3c-implement-parseusage-on-openrouterprovid](./quick/260601-m3c-implement-parseusage-on-openrouterprovid/) |
+| 260602-8l6 | Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies | 2026-06-02 | 47703b18 | [260602-8l6-refactor-cost-02-cost-03-tests-to-exerci](./quick/260602-8l6-refactor-cost-02-cost-03-tests-to-exerci/) |
 
 ## Session Continuity
 
