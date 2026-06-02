@@ -55,19 +55,22 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 ### Phase 9: Provider Class + Unit Tests
 **Goal**: The `OpenRouterAnthropicProvider` class exists, compiles, and is proven correct for all four high-risk override scenarios before any downstream wiring begins
 **Depends on**: Nothing (foundational)
-**Requirements**: PROV-01, PROV-02, PROV-03, CACHE-01, ROUTE-01, ROUTE-02, COST-01, COST-02, FAIL-01
+**Requirements**: PROV-01, PROV-02, PROV-03, CACHE-01, ROUTE-01, ROUTE-02, COST-01, COST-02
 **Success Criteria** (what must be TRUE):
   1. A request routed to an `openrouter-anthropic` account reaches `https://openrouter.ai/api/v1/messages` with `Authorization: Bearer <key>` and no URL double-segment (`/api/v1/v1/messages` does not appear)
   2. A request body containing native `cache_control` blocks passes through unchanged — no additional blocks are injected and the count stays at or below 4
   3. A request routed to an account with `openrouter_provider_preference` set has `body.provider = { order, allow_fallbacks }` injected; a request without the preference has no `provider` field added
   4. All turns of a multi-turn Claude Code session include a stable `session_id` field in the request body, routing all turns to the same OpenRouter backend
   5. Non-streaming and streaming responses each report a real `usage.cost` value (typeof-guarded `number`) via `extractUsageInfo()` / `extractStreamingUsage()` — no estimate fallback fires for streaming
-**Plans**: TBD
+**Plans**: 1 plan
+
+Plans:
+- [ ] 09-01-PLAN.md — OpenRouterAnthropicProvider class (four overrides + session_id/usage injection) and its TDD proof suite covering all five success criteria
 
 ### Phase 10: Type Wiring + CLI + HTTP API + SSE Sniffer
 **Goal**: The `openrouter-anthropic` mode string is registered across the full type chain, CLI and HTTP API support account creation for the new type, `overloaded_error` frames trigger failover, and debug metadata logging is available
 **Depends on**: Phase 9
-**Requirements**: MGMT-01, MGMT-02, OBS-01
+**Requirements**: MGMT-01, MGMT-02, OBS-01, FAIL-01
 **Success Criteria** (what must be TRUE):
   1. `bun run typecheck` passes with zero errors after all type unions and runtime conditions are extended
   2. `bun run cli --add-account <name> --mode openrouter-anthropic` creates a correctly typed account row in the database (provider `"openrouter-anthropic"`)
