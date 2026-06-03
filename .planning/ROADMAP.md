@@ -124,7 +124,7 @@ Plans:
 | 6. Dashboard UI & Maintenance Hardening | v1.1 | 4/4 | ✅ Complete | 2026-05-21 |
 | 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
 | 8. Real Cost Persistence | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
-| 9. Provider Class + Unit Tests | v1.3 | 1/1 | Complete    | 2026-06-02 |
+| 9. Provider Class + Unit Tests | v1.3 | 1/1 | Complete    | 2026-06-03 |
 | 10. Type Wiring + CLI + HTTP API + SSE Sniffer | v1.3 | 0/? | Not started | - |
 | 11. Dashboard Wiring | v1.3 | 0/? | Not started | - |
 | 12. Integration Test + Verification | v1.3 | 0/? | Not started | - |
