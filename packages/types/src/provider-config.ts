@@ -13,6 +13,8 @@ export const PROVIDER_NAMES = {
 	BEDROCK: "bedrock",
 	KILO: "kilo",
 	OPENROUTER: "openrouter",
+	// FORK PATCH: openrouter-anthropic provider name (D-06 / Phase 10)
+	OPENROUTER_ANTHROPIC: "openrouter-anthropic",
 	ALIBABA_CODING_PLAN: "alibaba-coding-plan",
 	CODEX: "codex",
 	QWEN: "qwen",
@@ -111,6 +113,13 @@ export const PROVIDER_CONFIG: Record<ProviderName, ProviderConfig> = {
 		requiresSessionTracking: false, // OpenRouter is pay-as-you-go
 		supportsUsageTracking: false, // Credits endpoint requires a separate management key
 		supportsOAuth: false, // OpenRouter uses API key authentication
+		defaultEndpoint: "https://openrouter.ai/api/v1",
+	},
+	// FORK PATCH: openrouter-anthropic provider config (D-06 / Phase 10)
+	[PROVIDER_NAMES.OPENROUTER_ANTHROPIC]: {
+		requiresSessionTracking: false,
+		supportsUsageTracking: false,
+		supportsOAuth: false,
 		defaultEndpoint: "https://openrouter.ai/api/v1",
 	},
 	[PROVIDER_NAMES.ALIBABA_CODING_PLAN]: {
