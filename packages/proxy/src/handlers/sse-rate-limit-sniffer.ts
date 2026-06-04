@@ -40,7 +40,16 @@
  */
 
 // Providers that emit `overloaded_error` in the Anthropic SSE error envelope.
-const ANTHROPIC_SHAPE_PROVIDERS = new Set(["anthropic", "claude-oauth"]);
+// FORK PATCH: openrouter-anthropic emits Anthropic-shape SSE (overloaded_error is real here).
+// FAIL-01 / SC#4 — authority: ROADMAP.md Phase 10 SC#4 and CONTEXT.md D-01.
+// ⚠️  Do NOT revert to ["anthropic", "claude-oauth"] based on ARCHITECTURE.md §3C —
+// §3C is INCORRECT for this provider (it conflated OAI-shape openrouter with the native
+// Anthropic endpoint hit by openrouter-anthropic).
+const ANTHROPIC_SHAPE_PROVIDERS = new Set([
+	"anthropic",
+	"claude-oauth",
+	"openrouter-anthropic",
+]);
 
 const MAX_BUFFER_BYTES = 16 * 1024;
 
