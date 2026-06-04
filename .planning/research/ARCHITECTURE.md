@@ -156,7 +156,7 @@ These files reference `openrouter` but the logic generalizes correctly:
 | File | Why No Change Needed |
 |------|---------------------|
 | `packages/proxy/src/handlers/response-processor.ts` | No `provider === "openrouter"` special-case at all. The only per-provider branches are `account.provider === "zai"` (line 232) and `account.provider === "codex"` (line 93). Usage extraction dispatches through the provider's own methods — fully polymorphic. |
-| `packages/proxy/src/handlers/sse-rate-limit-sniffer.ts` | `ANTHROPIC_SHAPE_PROVIDERS` set contains only `"anthropic"` and `"claude-oauth"`. `"openrouter"` is not in it and `"openrouter-anthropic"` should not be added either — `rate_limit_error` is matched for ALL non-Anthropic providers already via the default `typePattern`. No change needed. |
+| `packages/proxy/src/handlers/sse-rate-limit-sniffer.ts` | ⚠️ **CORRECTION (Phase 10 discuss, 2026-06-04): THIS ROW IS WRONG — `"openrouter-anthropic"` MUST be added to `ANTHROPIC_SHAPE_PROVIDERS`.** The original claim conflated `openrouter-anthropic` with the OAI-shape `openrouter` provider. The native Anthropic Messages endpoint emits genuine Anthropic-shape `overloaded_error` SSE frames, and the sniffer GATES `overloaded_error` matching behind this set (lines 79–81) — the default `typePattern` matches `rate_limit_error` ONLY, not `overloaded_error`. ROADMAP SC#4 requires this change. See Phase 10 CONTEXT.md D-01. (`"openrouter"` itself correctly stays out — it is OAI-shape and does not emit Anthropic `overloaded_error`.) |
 | `packages/proxy/src/usage-extraction.ts` | Reads `usage.cost` generically from any SSE frame via `typeof === "number"` guard. Works for `openrouter-anthropic` streaming already (no `cost` field in SSE means `providerCostUsd` stays `undefined`, which is the correct behavior). No change needed. |
 | `packages/proxy/src/post-processor.worker.ts` | `resolveCostUsd()` pathway is provider-agnostic. For `openrouter-anthropic` streaming, `providerCostUsd` will remain `undefined` (no cost in SSE), so `resolveCostUsd` falls through to `estimateCostUSD()`. Intended behavior. No change needed. |
 | `packages/database/src/migrations.ts` and `migrations-pg.ts` | `openrouter_provider_preference` column already exists. No new columns needed. |
@@ -296,7 +296,7 @@ Dependencies flow: provider class → registry → type unions → CLI wiring �
 | `AnthropicCompatibleProvider` | `anthropic-compatible/provider.ts` | Upstream code; used as parent class only |
 | `OpenRouterProvider` | `openrouter/provider.ts` | Fork-safety requirement; left untouched |
 | `response-processor.ts` | proxy package | No `"openrouter"` special-case; polymorphic dispatch |
-| `sse-rate-limit-sniffer.ts` | proxy package | `"openrouter"` not in `ANTHROPIC_SHAPE_PROVIDERS`; `rate_limit_error` already matched for all non-Anthropic providers |
+| `sse-rate-limit-sniffer.ts` | proxy package | ⚠️ **WRONG — see §3C correction (2026-06-04): `"openrouter-anthropic"` MUST be added** to `ANTHROPIC_SHAPE_PROVIDERS` so `overloaded_error` triggers failover (ROADMAP SC#4 / CONTEXT D-01). Only `"openrouter"` (OAI-shape) stays out. |
 | `usage-extraction.ts` | proxy package | Generic `usage.cost` reader; works for both providers |
 | `post-processor.worker.ts` | proxy package | `resolveCostUsd` is provider-agnostic |
 | DB migrations (SQLite + PG) | database package | `openrouter_provider_preference` column exists; no new columns |
