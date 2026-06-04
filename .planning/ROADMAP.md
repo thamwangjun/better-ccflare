@@ -83,12 +83,20 @@ Plans:
   4. A mid-stream `overloaded_error` frame on an `openrouter-anthropic` account triggers account failover (the sniffer includes the new provider in its shape set)
   5. With `BETTER_CCFLARE_DEBUG` set, the proxy logs `openrouter_metadata` (backend name, latency) extracted from the `message_stop` SSE event on each `openrouter-anthropic` request
 
-**Plans**: 4 plans
-Plans:
+**Plans**: 4 plansPlans:
+**Wave 1**
+
 - [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
 - [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
 - [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
+
+**Cross-cutting constraints:**
+
+- `bun run typecheck` passes with zero errors
 
 ### Phase 11: Dashboard Wiring
 
@@ -102,10 +110,12 @@ Plans:
 
 **Plans**: 4 plans
 Plans:
+
 - [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
 - [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
 - [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
 - [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
+
 **UI hint**: yes
 
 ### Phase 12: Integration Test + Verification
@@ -122,6 +132,7 @@ Plans:
 
 **Plans**: 4 plans
 Plans:
+
 - [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
 - [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
 - [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
