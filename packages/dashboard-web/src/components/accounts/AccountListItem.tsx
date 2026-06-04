@@ -347,22 +347,25 @@ export function AccountListItem({
 						</Button>
 					)}
 					{/* FORK PATCH: Provider preferences button (PROV-04) */}
-					{account.provider === "openrouter" && onProviderPreferenceChange && (
-						<Button
-							variant="ghost"
-							size="sm"
-							onClick={() => onProviderPreferenceChange(account)}
-							title={
-								account.openrouterProviderPreference
-									? `Provider order: ${account.openrouterProviderPreference.order.join(", ")}`
-									: "Configure OpenRouter provider preferences"
-							}
-						>
-							<Settings2
-								className={`h-4 w-4 ${account.openrouterProviderPreference ? "text-primary" : ""}`}
-							/>
-						</Button>
-					)}
+					{/* FORK PATCH: widened for openrouter-anthropic (MGMT-04) */}
+					{(account.provider === "openrouter" ||
+						account.provider === "openrouter-anthropic") &&
+						onProviderPreferenceChange && (
+							<Button
+								variant="ghost"
+								size="sm"
+								onClick={() => onProviderPreferenceChange(account)}
+								title={
+									account.openrouterProviderPreference
+										? `Provider order: ${account.openrouterProviderPreference.order.join(", ")}`
+										: "Configure OpenRouter provider preferences"
+								}
+							>
+								<Settings2
+									className={`h-4 w-4 ${account.openrouterProviderPreference ? "text-primary" : ""}`}
+								/>
+							</Button>
+						)}
 					{account.provider === "qwen" && onReauth && (
 						<Button
 							variant="ghost"
