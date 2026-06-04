@@ -661,7 +661,9 @@ export function AccountsTab() {
 							onAddAlibabaCodingPlanAccount={handleAddAlibabaCodingPlanAccount}
 							onAddKiloAccount={handleAddKiloAccount}
 							onAddOpenRouterAccount={handleAddOpenRouterAccount}
-							onAddOpenRouterAnthropicAccount={handleAddOpenRouterAnthropicAccount}
+							onAddOpenRouterAnthropicAccount={
+								handleAddOpenRouterAnthropicAccount
+							}
 							onAddAnthropicCompatibleAccount={
 								handleAddAnthropicCompatibleAccount
 							}

@@ -1099,7 +1099,9 @@ export function AccountAddForm({
 								<SelectItem value="kilo">Kilo Gateway (API Key)</SelectItem>
 								<SelectItem value="openrouter">OpenRouter (API Key)</SelectItem>
 								{/* FORK PATCH: openrouter-anthropic SelectItem (MGMT-03) */}
-								<SelectItem value="openrouter-anthropic">OpenRouter Anthropic Messages (API Key)</SelectItem>
+								<SelectItem value="openrouter-anthropic">
+									OpenRouter Anthropic Messages (API Key)
+								</SelectItem>
 								<SelectItem value="alibaba-coding-plan">
 									Alibaba Coding Plan International (API Key)
 								</SelectItem>
@@ -1815,7 +1817,8 @@ export function AccountAddForm({
 									placeholder="Enter your OpenRouter API key"
 								/>
 								<p className="text-xs text-muted-foreground">
-									Endpoint: https://openrouter.ai/api/v1 (native Anthropic Messages)
+									Endpoint: https://openrouter.ai/api/v1 (native Anthropic
+									Messages)
 								</p>
 							</div>
 							<div className="space-y-2">
