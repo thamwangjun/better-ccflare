@@ -86,7 +86,7 @@ Plans:
 **Plans**: 4 plansPlans:
 **Wave 1**
 
-- [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
+- [x] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -151,6 +151,6 @@ Plans:
 | 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
 | 8. Real Cost Persistence | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
 | 9. Provider Class + Unit Tests | v1.3 | 1/1 | Complete    | 2026-06-03 |
-| 10. Type Wiring + CLI + HTTP API + SSE Sniffer | v1.3 | 0/? | Not started | - |
+| 10. Type Wiring + CLI + HTTP API + SSE Sniffer | v1.3 | 1/4 | In Progress|  |
 | 11. Dashboard Wiring | v1.3 | 0/? | Not started | - |
 | 12. Integration Test + Verification | v1.3 | 0/? | Not started | - |
