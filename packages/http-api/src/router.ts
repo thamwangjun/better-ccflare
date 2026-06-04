@@ -32,6 +32,8 @@ import {
 	createOllamaCloudAccountAddHandler,
 	createOpenAIAccountAddHandler,
 	createOpenRouterAccountAddHandler,
+	// FORK PATCH: openrouter-anthropic account creation handler (MGMT-02 / D-05)
+	createOpenRouterAnthropicAccountAddHandler,
 	createVertexAIAccountAddHandler,
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
@@ -170,6 +172,9 @@ export class APIRouter {
 		const kiloAccountAddHandler = createKiloAccountAddHandler(dbOps);
 		const openrouterAccountAddHandler =
 			createOpenRouterAccountAddHandler(dbOps);
+		// FORK PATCH: openrouter-anthropic account creation handler (MGMT-02 / D-05)
+		const openrouterAnthropicAccountAddHandler =
+			createOpenRouterAnthropicAccountAddHandler(dbOps);
 		const nanogptAccountAddHandler = createNanoGPTAccountAddHandler(dbOps);
 		const anthropicCompatibleAccountAddHandler =
 			createAnthropicCompatibleAccountAddHandler(dbOps);
@@ -247,6 +252,10 @@ export class APIRouter {
 		);
 		this.handlers.set("POST:/api/accounts/openrouter", (req) =>
 			openrouterAccountAddHandler(req),
+		);
+		// FORK PATCH: openrouter-anthropic account creation route (MGMT-02 / D-05)
+		this.handlers.set("POST:/api/accounts/openrouter-anthropic", (req) =>
+			openrouterAnthropicAccountAddHandler(req),
 		);
 		this.handlers.set("POST:/api/accounts/nanogpt", (req) =>
 			nanogptAccountAddHandler(req),
