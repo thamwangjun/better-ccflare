@@ -45,6 +45,7 @@ export interface AddAccountOptionsWithAdapter {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
+		| "openrouter-anthropic" // FORK PATCH: MGMT-01 / D-06
 		| "alibaba-coding-plan"
 		| "codex"
 		| "qwen"
@@ -77,6 +78,7 @@ export interface AccountListItemWithMode extends AccountListItem {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
+		| "openrouter-anthropic" // FORK PATCH: MGMT-01 / D-06
 		| "alibaba-coding-plan"
 		| "codex"
 		| "qwen"
@@ -347,6 +349,54 @@ async function createOpenRouterAccount(
 			accountId,
 			name,
 			"openrouter",
+			validatedApiKey,
+			null,
+			null,
+			now + 365 * 24 * 60 * 60 * 1000,
+			now,
+			0,
+			0,
+			validatedPriority,
+			null,
+			validatedModelMappings,
+			validatedModelFallbacks,
+		],
+	);
+}
+
+// FORK PATCH: openrouter-anthropic account creation helper (MGMT-01 / D-06)
+async function createOpenRouterAnthropicAccount(
+	dbOps: DatabaseOperations,
+	name: string,
+	apiKey: string,
+	priority: number,
+	modelMappings?: { [key: string]: string | string[] } | null,
+	modelFallbacks?: { [key: string]: string | string[] } | null,
+): Promise<void> {
+	const accountId = crypto.randomUUID();
+	const now = Date.now();
+	const validatedApiKey = validateApiKey(apiKey, "OpenRouter API key");
+	const validatedPriority = validatePriority(priority, "priority");
+	let validatedModelMappings = null;
+	if (modelMappings && Object.keys(modelMappings).length > 0) {
+		const validatedMappings = validateAndSanitizeModelMappings(modelMappings);
+		validatedModelMappings = JSON.stringify(validatedMappings);
+	}
+	// Validate model fallbacks
+	let validatedModelFallbacks = null;
+	if (modelFallbacks && Object.keys(modelFallbacks).length > 0) {
+		const validated = validateAndSanitizeModelFallbacks(modelFallbacks);
+		validatedModelFallbacks = validated ? JSON.stringify(validated) : null;
+	}
+	await dbOps.getAdapter().run(
+		`INSERT INTO accounts (
+			id, name, provider, api_key, refresh_token, access_token,
+			expires_at, created_at, request_count, total_requests, priority, custom_endpoint, model_mappings, model_fallbacks
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		[
+			accountId,
+			name,
+			"openrouter-anthropic",
 			validatedApiKey,
 			null,
 			null,
@@ -1358,6 +1408,34 @@ export async function addAccount(
 		console.log(`\nAccount '${name}' added successfully!`);
 		console.log("Type: OpenRouter (API key)");
 		console.log("Endpoint: https://openrouter.ai/api/v1");
+		// FORK PATCH: openrouter-anthropic CLI dispatch branch (MGMT-01 / D-06)
+	} else if (mode === "openrouter-anthropic") {
+		// Handle OpenRouter (native Anthropic Messages endpoint) accounts with API keys
+		const apiKey = await adapter.input("\nEnter your OpenRouter API key: ");
+		// Get priority
+		const priority =
+			providedPriority ??
+			(await adapter.input(
+				"\nEnter priority (0 = highest, lower number = higher priority, default 0): ",
+			));
+		// Get model mappings
+		const finalModelMappings = await promptModelMappings(
+			adapter,
+			modelMappings,
+		);
+
+		await createOpenRouterAnthropicAccount(
+			dbOps,
+			name,
+			apiKey,
+			typeof priority === "string"
+				? parseInt(priority, 10) || 0
+				: priority || 0,
+			finalModelMappings,
+		);
+		console.log(`\nAccount '${name}' added successfully!`);
+		console.log("Type: OpenRouter Anthropic (API key)");
+		console.log("Endpoint: https://openrouter.ai/api/v1");
 	} else if (mode === "alibaba-coding-plan") {
 		// Handle Alibaba Coding Plan accounts with API keys
 		const apiKey = await adapter.input(
@@ -1657,6 +1735,7 @@ export async function getAccountsList(
 					account.provider === "anthropic-compatible" ||
 					account.provider === "bedrock" ||
 					account.provider === "openrouter" ||
+					account.provider === "openrouter-anthropic" || // FORK PATCH: MGMT-01 / D-06
 					account.provider === "codex"
 				) {
 					return account.provider;
