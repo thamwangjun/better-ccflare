@@ -243,6 +243,22 @@ export function AccountListItem({
 									)}
 								</>
 							)}
+							{/* Malformed/legacy custom_endpoint: surface the raw value so
+								misconfiguration is visible instead of silently rendering a
+								bedrock account with no profile/region. */}
+							{account.provider === "bedrock" &&
+								account.customEndpoint &&
+								!bedrockProfile && (
+									<>
+										<span className="text-sm text-muted-foreground">•</span>
+										<p
+											className="text-sm text-yellow-600"
+											title="Unrecognized bedrock endpoint format (expected bedrock:<profile>:<region>)"
+										>
+											{account.customEndpoint}
+										</p>
+									</>
+								)}
 						</div>
 					</div>
 					<div className="flex items-center gap-2">
