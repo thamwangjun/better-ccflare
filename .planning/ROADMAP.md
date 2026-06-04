@@ -46,7 +46,7 @@ Full details: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md)
 ### v1.3 OpenRouter Anthropic Messages Provider
 
 - [x] **Phase 9: Provider Class + Unit Tests** — New `OpenRouterAnthropicProvider` with all four method overrides, TDD-verified (completed 2026-06-02)
-- [ ] **Phase 10: Type Wiring + CLI + HTTP API + SSE Sniffer** — Mode string propagated through all 11 registration sites; CLI and HTTP API functional; failover and debug logging wired
+- [x] **Phase 10: Type Wiring + CLI + HTTP API + SSE Sniffer** — Mode string propagated through all 11 registration sites; CLI and HTTP API functional; failover and debug logging wired (completed 2026-06-04)
 - [ ] **Phase 11: Dashboard Wiring** — Add Account form, provider-preference dialog, and API client updated for the new provider type
 - [ ] **Phase 12: Integration Test + Verification** — End-to-end confirmation via a real `:free` model request through the full proxy stack
 
@@ -90,9 +90,9 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
-- [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
-- [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
+- [x] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
+- [x] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
+- [x] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
 
 **Cross-cutting constraints:**
 
@@ -111,10 +111,10 @@ Plans:
 **Plans**: 4 plans
 Plans:
 
-- [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
-- [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
-- [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
-- [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
+- [x] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
+- [x] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
+- [x] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
+- [x] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
 
 **UI hint**: yes
 
@@ -133,10 +133,10 @@ Plans:
 **Plans**: 4 plans
 Plans:
 
-- [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
-- [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
-- [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
-- [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
+- [x] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
+- [x] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
+- [x] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
+- [x] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
 
 ## Progress
 
@@ -151,6 +151,6 @@ Plans:
 | 7. OpenRouter Response Cost Extraction | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
 | 8. Real Cost Persistence | v1.2 | 2/2 | ✅ Complete | 2026-05-31 |
 | 9. Provider Class + Unit Tests | v1.3 | 1/1 | Complete    | 2026-06-03 |
-| 10. Type Wiring + CLI + HTTP API + SSE Sniffer | v1.3 | 1/4 | In Progress|  |
+| 10. Type Wiring + CLI + HTTP API + SSE Sniffer | v1.3 | 4/4 | Complete   | 2026-06-04 |
 | 11. Dashboard Wiring | v1.3 | 0/? | Not started | - |
 | 12. Integration Test + Verification | v1.3 | 0/? | Not started | - |
