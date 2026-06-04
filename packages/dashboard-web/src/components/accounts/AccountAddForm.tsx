@@ -26,6 +26,7 @@ interface AccountAddFormProps {
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
+			| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic mode (MGMT-03)
 			| "alibaba-coding-plan"
 			| "codex"
 			| "qwen"
@@ -102,6 +103,13 @@ interface AccountAddFormProps {
 		priority: number;
 		modelMappings?: { [key: string]: string };
 	}) => Promise<void>;
+	// FORK PATCH: openrouter-anthropic prop (MGMT-03)
+	onAddOpenRouterAnthropicAccount: (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => Promise<void>;
 	onAddOllamaAccount: (params: {
 		name: string;
 		priority: number;
@@ -132,6 +140,7 @@ export function AccountAddForm({
 	onAddAlibabaCodingPlanAccount,
 	onAddKiloAccount,
 	onAddOpenRouterAccount,
+	onAddOpenRouterAnthropicAccount, // FORK PATCH: openrouter-anthropic (MGMT-03)
 	onAddOllamaAccount,
 	onAddOllamaCloudAccount,
 	onCancel,
@@ -155,6 +164,7 @@ export function AccountAddForm({
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
+			| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic state (MGMT-03)
 			| "alibaba-coding-plan"
 			| "codex"
 			| "qwen"
@@ -429,6 +439,7 @@ export function AccountAddForm({
 				| "bedrock"
 				| "kilo"
 				| "openrouter"
+				| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic cast (MGMT-03)
 				| "alibaba-coding-plan",
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
@@ -743,6 +754,43 @@ export function AccountAddForm({
 			return;
 		}
 
+		// FORK PATCH: openrouter-anthropic submit branch (MGMT-03)
+		if (newAccount.mode === "openrouter-anthropic") {
+			if (!newAccount.apiKey) {
+				onError("API key is required for OpenRouter Anthropic accounts");
+				return;
+			}
+			const modelMappings: { [key: string]: string } = {};
+			if (newAccount.opusModel) modelMappings.opus = newAccount.opusModel;
+			if (newAccount.sonnetModel) modelMappings.sonnet = newAccount.sonnetModel;
+			if (newAccount.haikuModel) modelMappings.haiku = newAccount.haikuModel;
+			await onAddOpenRouterAnthropicAccount({
+				name: newAccount.name,
+				apiKey: newAccount.apiKey,
+				priority: newAccount.priority,
+				modelMappings:
+					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
+			});
+			setNewAccount({
+				name: "",
+				mode: "claude-oauth",
+				priority: 0,
+				apiKey: "",
+				customEndpoint: "",
+				projectId: "",
+				region: "global",
+				profile: "",
+				awsRegion: "",
+				crossRegionMode: "geographic",
+				customBedrockModel: "",
+				opusModel: "",
+				sonnetModel: "",
+				haikuModel: "",
+			});
+			onSuccess();
+			return;
+		}
+
 		if (newAccount.mode === "anthropic-compatible") {
 			if (!newAccount.apiKey) {
 				onError("API key is required for Anthropic-compatible accounts");
@@ -1018,6 +1066,7 @@ export function AccountAddForm({
 									| "bedrock"
 									| "kilo"
 									| "openrouter"
+									| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic onValueChange cast (MGMT-03)
 									| "codex"
 									| "qwen"
 									| "ollama"
@@ -1049,6 +1098,8 @@ export function AccountAddForm({
 								</SelectItem>
 								<SelectItem value="kilo">Kilo Gateway (API Key)</SelectItem>
 								<SelectItem value="openrouter">OpenRouter (API Key)</SelectItem>
+								{/* FORK PATCH: openrouter-anthropic SelectItem (MGMT-03) */}
+								<SelectItem value="openrouter-anthropic">OpenRouter Anthropic Messages (API Key)</SelectItem>
 								<SelectItem value="alibaba-coding-plan">
 									Alibaba Coding Plan International (API Key)
 								</SelectItem>
@@ -1680,6 +1731,91 @@ export function AccountAddForm({
 								/>
 								<p className="text-xs text-muted-foreground">
 									Endpoint: https://openrouter.ai/api/v1
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label className="text-sm font-medium">
+									Model Mappings (Optional)
+								</Label>
+								<p className="text-xs text-muted-foreground">
+									Map Anthropic model names to OpenRouter-specific models. Leave
+									empty to pass model names through unchanged.
+								</p>
+								<div className="space-y-2 pl-4">
+									<div>
+										<Label htmlFor="opusModel" className="text-sm">
+											Opus Model
+										</Label>
+										<Input
+											id="opusModel"
+											value={newAccount.opusModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													opusModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-opus-4-5"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="sonnetModel" className="text-sm">
+											Sonnet Model
+										</Label>
+										<Input
+											id="sonnetModel"
+											value={newAccount.sonnetModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													sonnetModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-sonnet-4-5"
+											className="mt-1"
+										/>
+									</div>
+									<div>
+										<Label htmlFor="haikuModel" className="text-sm">
+											Haiku Model
+										</Label>
+										<Input
+											id="haikuModel"
+											value={newAccount.haikuModel}
+											onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+												setNewAccount({
+													...newAccount,
+													haikuModel: (e.target as HTMLInputElement).value,
+												})
+											}
+											placeholder="e.g., anthropic/claude-haiku-4-5"
+											className="mt-1"
+										/>
+									</div>
+								</div>
+							</div>
+						</>
+					)}
+					{/* FORK PATCH: openrouter-anthropic form block (MGMT-03) */}
+					{newAccount.mode === "openrouter-anthropic" && (
+						<>
+							<div className="space-y-2">
+								<Label htmlFor="apiKey">OpenRouter API Key</Label>
+								<Input
+									id="apiKey"
+									type="password"
+									value={newAccount.apiKey}
+									onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+										setNewAccount({
+											...newAccount,
+											apiKey: (e.target as HTMLInputElement).value,
+										})
+									}
+									placeholder="Enter your OpenRouter API key"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Endpoint: https://openrouter.ai/api/v1 (native Anthropic Messages)
 								</p>
 							</div>
 							<div className="space-y-2">

@@ -118,6 +118,7 @@ export function AccountsTab() {
 			| "bedrock"
 			| "kilo"
 			| "openrouter"
+			| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic mode (MGMT-03)
 			| "alibaba-coding-plan"
 			| "codex"
 			| "qwen"
@@ -298,6 +299,24 @@ export function AccountsTab() {
 	}) => {
 		try {
 			await api.addOpenRouterAccount(params);
+			await loadAccounts();
+			setAdding(false);
+			setActionError(null);
+		} catch (err) {
+			setActionError(formatError(err));
+			throw err;
+		}
+	};
+
+	// FORK PATCH: openrouter-anthropic handler (MGMT-03)
+	const handleAddOpenRouterAnthropicAccount = async (params: {
+		name: string;
+		apiKey: string;
+		priority: number;
+		modelMappings?: { [key: string]: string };
+	}) => {
+		try {
+			await api.addOpenRouterAnthropicAccount(params);
 			await loadAccounts();
 			setAdding(false);
 			setActionError(null);
@@ -642,6 +661,7 @@ export function AccountsTab() {
 							onAddAlibabaCodingPlanAccount={handleAddAlibabaCodingPlanAccount}
 							onAddKiloAccount={handleAddKiloAccount}
 							onAddOpenRouterAccount={handleAddOpenRouterAccount}
+							onAddOpenRouterAnthropicAccount={handleAddOpenRouterAnthropicAccount}
 							onAddAnthropicCompatibleAccount={
 								handleAddAnthropicCompatibleAccount
 							}
