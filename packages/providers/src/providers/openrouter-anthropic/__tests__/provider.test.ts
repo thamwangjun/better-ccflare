@@ -1,5 +1,55 @@
 import { describe, expect, it } from "bun:test";
+import { logBus } from "@better-ccflare/logger";
 import { OpenRouterAnthropicProvider } from "../provider";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers for OBS-01 metadata tap tests (D-04)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Capture all "log" events emitted on logBus while running `fn`. Restores the
+// listener afterwards. Returns the captured events (msg + data).
+async function captureLogEvents(
+	fn: () => Promise<void>,
+): Promise<Array<{ msg: string; data?: unknown }>> {
+	const events: Array<{ msg: string; data?: unknown }> = [];
+	const listener = (e: { msg: string; data?: unknown }) => {
+		events.push({ msg: e.msg, data: e.data });
+	};
+	logBus.on("log", listener);
+	try {
+		await fn();
+	} finally {
+		logBus.off("log", listener);
+	}
+	return events;
+}
+
+// Build a streaming SSE Response whose terminal message_stop event carries
+// openrouter_metadata (provider/backend name + latency).
+function makeMetadataStreamingResponse(metadata: unknown): Response {
+	const sse =
+		`event: message_start\n` +
+		`data: ${JSON.stringify({
+			message: {
+				model: "anthropic/claude-sonnet-4-6",
+				usage: {
+					input_tokens: 100,
+					output_tokens: 0,
+					cache_creation_input_tokens: 0,
+					cache_read_input_tokens: 0,
+				},
+			},
+		})}\n\n` +
+		`event: message_delta\n` +
+		`data: ${JSON.stringify({
+			usage: { input_tokens: 100, output_tokens: 10, cost: 0.001 },
+		})}\n\n` +
+		`event: message_stop\n` +
+		`data: ${JSON.stringify({ type: "message_stop", openrouter_metadata: metadata })}\n\n`;
+	return new Response(sse, {
+		headers: { "content-type": "text/event-stream" },
+	});
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SSE helpers
@@ -721,5 +771,82 @@ describe("OpenRouterAnthropicProvider.extractStreamingUsage / parseUsage (stream
 		const usage = await provider.parseUsage(makeStreamingResponse("0.001"));
 
 		expect(usage?.costUsd).toBeUndefined();
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OBS-01 — D-03: X-OpenRouter-Experimental-Metadata header injection
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("OpenRouterAnthropicProvider.transformRequestBody (metadata header, D-03)", () => {
+	it("injects X-OpenRouter-Experimental-Metadata: enabled on the transformed request", async () => {
+		const provider = new OpenRouterAnthropicProvider();
+		const body = {
+			model: "anthropic/claude-sonnet-4-6",
+			messages: [{ role: "user", content: "hello" }],
+			max_tokens: 10,
+		};
+		const request = new Request("https://openrouter.ai/api/v1/messages", {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify(body),
+		});
+
+		const transformed = await provider.transformRequestBody(request);
+
+		expect(transformed.headers.get("X-OpenRouter-Experimental-Metadata")).toBe(
+			"enabled",
+		);
+	});
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OBS-01 — D-04: openrouter_metadata debug logging on message_stop
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("OpenRouterAnthropicProvider openrouter_metadata debug tap (D-04)", () => {
+	it("logs openrouter_metadata when BETTER_CCFLARE_DEBUG is set", async () => {
+		const saved = process.env.BETTER_CCFLARE_DEBUG;
+		process.env.BETTER_CCFLARE_DEBUG = "1";
+		try {
+			const provider = new OpenRouterAnthropicProvider();
+			const response = makeMetadataStreamingResponse({
+				provider: "Anthropic",
+				latency: 100,
+			});
+
+			const events = await captureLogEvents(async () => {
+				await provider.extractStreamingUsage(response, response.headers);
+			});
+
+			const serialized = JSON.stringify(events);
+			expect(serialized).toContain("openrouter_metadata");
+			expect(serialized).toContain("Anthropic");
+		} finally {
+			if (saved === undefined) delete process.env.BETTER_CCFLARE_DEBUG;
+			else process.env.BETTER_CCFLARE_DEBUG = saved;
+		}
+	});
+
+	it("does NOT log openrouter_metadata when BETTER_CCFLARE_DEBUG is unset", async () => {
+		const saved = process.env.BETTER_CCFLARE_DEBUG;
+		delete process.env.BETTER_CCFLARE_DEBUG;
+		try {
+			const provider = new OpenRouterAnthropicProvider();
+			const response = makeMetadataStreamingResponse({
+				provider: "Anthropic",
+				latency: 100,
+			});
+
+			const events = await captureLogEvents(async () => {
+				await provider.extractStreamingUsage(response, response.headers);
+			});
+
+			const serialized = JSON.stringify(events);
+			expect(serialized).not.toContain("openrouter_metadata");
+		} finally {
+			if (saved === undefined) delete process.env.BETTER_CCFLARE_DEBUG;
+			else process.env.BETTER_CCFLARE_DEBUG = saved;
+		}
 	});
 });

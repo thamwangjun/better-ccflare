@@ -1,11 +1,26 @@
 import { BUFFER_SIZES } from "@better-ccflare/core";
-import { Logger } from "@better-ccflare/logger";
+import { Logger, LogLevel } from "@better-ccflare/logger";
 import type { Account } from "@better-ccflare/types";
 import { AnthropicCompatibleProvider } from "../anthropic-compatible/provider";
 
 const OPENROUTER_ANTHROPIC_DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1";
 
 const log = new Logger("OpenRouterAnthropicProvider");
+
+// FORK PATCH: dedicated DEBUG-level logger for the OpenRouter routing-metadata tap
+// (OBS-01 / D-04 / Phase 10). The shared `log` above is constructed at module load
+// with INFO level, so its `debug()` never reaches logBus. This logger is fixed at
+// DEBUG level; emission is gated explicitly on BETTER_CCFLARE_DEBUG below so nothing
+// is logged in normal operation.
+const metadataLog = new Logger("OpenRouterAnthropicProvider", LogLevel.DEBUG);
+
+// FORK PATCH: returns true only when BETTER_CCFLARE_DEBUG opt-in is active (OBS-01 / D-04).
+function isMetadataDebugEnabled(): boolean {
+	return (
+		process.env.BETTER_CCFLARE_DEBUG === "1" ||
+		process.env.ccflare_DEBUG === "1"
+	);
+}
 
 export class OpenRouterAnthropicProvider extends AnthropicCompatibleProvider {
 	constructor() {
@@ -49,6 +64,12 @@ export class OpenRouterAnthropicProvider extends AnthropicCompatibleProvider {
 	): Promise<Request> {
 		// 1. Model mapping from parent (upstream behaviour preserved)
 		const mapped = await super.transformRequestBody(request, account);
+
+		// FORK PATCH: inject routing-metadata header unconditionally (OBS-01 / D-03 / Phase 10).
+		// Must be set on the same Headers object passed to the final new Request(...) (Pitfall 5).
+		// Construct a mutable copy so we never mutate a possibly-immutable source Headers.
+		const headers = new Headers(mapped.headers);
+		headers.set("X-OpenRouter-Experimental-Metadata", "enabled");
 
 		try {
 			const body = await mapped.clone().json();
@@ -99,7 +120,7 @@ export class OpenRouterAnthropicProvider extends AnthropicCompatibleProvider {
 
 				return new Request(mapped.url, {
 					method: mapped.method,
-					headers: mapped.headers,
+					headers,
 					body: JSON.stringify(body),
 				});
 			}
@@ -107,7 +128,14 @@ export class OpenRouterAnthropicProvider extends AnthropicCompatibleProvider {
 			log.debug("Failed to inject request fields:", error);
 		}
 
-		return mapped;
+		// FORK PATCH: even on the body-untouched fallback path, the metadata header
+		// must still be present (OBS-01 / D-03). Rebuild the request with `headers`.
+		return new Request(mapped.url, {
+			method: mapped.method,
+			headers,
+			body: mapped.body,
+			...(mapped.body ? { duplex: "half" } : {}),
+		} as RequestInit);
 	}
 
 	// FORK PATCH: call super for Anthropic-native cache fields; attach OpenRouter real cost.
@@ -267,6 +295,41 @@ export class OpenRouterAnthropicProvider extends AnthropicCompatibleProvider {
 		const lines = buffered.split("\n");
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i].trim();
+			// FORK PATCH: tap message_stop for OpenRouter backend routing metadata
+			// (OBS-01 / D-04 / Phase 10). Logged at DEBUG and gated on BETTER_CCFLARE_DEBUG;
+			// no metadata is emitted in normal operation. Only the structured
+			// openrouter_metadata object is logged — never api_key/bearer tokens.
+			if (
+				isMetadataDebugEnabled() &&
+				(line.startsWith("event: message_stop") ||
+					line.startsWith("event:message_stop"))
+			) {
+				for (let j = i + 1; j < lines.length; j++) {
+					const nextLine = lines[j].trim();
+					if (nextLine.startsWith("data:")) {
+						const jsonStr = nextLine.startsWith("data: ")
+							? nextLine.slice(6)
+							: nextLine.slice(5);
+						try {
+							const data = JSON.parse(jsonStr) as {
+								type?: string;
+								openrouter_metadata?: unknown;
+							};
+							if (data.type === "message_stop" && data.openrouter_metadata) {
+								metadataLog.debug(
+									"openrouter_metadata:",
+									JSON.stringify(data.openrouter_metadata),
+								);
+							}
+						} catch {
+							// Ignore parse errors for this event.
+						}
+						break;
+					} else if (nextLine && !nextLine.startsWith("event:")) {
+						break;
+					}
+				}
+			}
 			if (
 				line.startsWith("event: message_delta") ||
 				line.startsWith("event:message_delta")
