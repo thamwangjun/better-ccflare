@@ -279,6 +279,7 @@ export interface AccountListItem {
 		| "bedrock"
 		| "kilo"
 		| "openrouter"
+		| "openrouter-anthropic" // FORK PATCH: D-06 / Phase 10
 		| "alibaba-coding-plan"
 		| "codex"
 		| "qwen"
@@ -302,7 +303,8 @@ export interface AddAccountOptions {
 		| "anthropic-compatible"
 		| "openai-compatible"
 		| "bedrock"
-		| "openrouter";
+		| "openrouter"
+		| "openrouter-anthropic"; // FORK PATCH: D-06 / Phase 10
 	priority?: number;
 	customEndpoint?: string;
 }
