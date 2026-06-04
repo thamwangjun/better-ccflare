@@ -12,7 +12,7 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 **Shipped:** v1.2 OpenRouter Cost Tracking (2026-06-02) — 2 phases, 4 plans, 5 quick tasks. OpenRouter requests now persist real `usage.cost` to `requests.cost_usd` across all four response paths, replacing client-side estimates that returned `$0` for unknown models.
 
-**In progress (v1.3):** Phase 9 complete (2026-06-02) — `OpenRouterAnthropicProvider` class exists and is TDD-verified (34/34 tests) for all four high-risk overrides (URL construction, three FORK-PATCH body injections with zero cache_control injection, non-streaming + streaming cost extraction). Not yet registered/wired — downstream wiring deferred to Phases 10–12.
+**In progress (v1.3):** Phase 9 complete (2026-06-02) — `OpenRouterAnthropicProvider` class exists and is TDD-verified (34/34 tests). Phases 10–11 complete (2026-06-04) — provider registered/wired through CLI, HTTP API, and SSE sniffer (Phase 10), then surfaced in the dashboard: the Add Account form offers `openrouter-anthropic` (posts to `POST /api/accounts/openrouter-anthropic`) and the provider-preference dialog gate is widened to the new account type (Phase 11, MGMT-03 + MGMT-04).
 
 ## Current Milestone: v1.3 OpenRouter Anthropic Messages Provider
 
@@ -48,6 +48,8 @@ Stay current with upstream while running a stable personal instance enhanced wit
 - ✓ Post-processor worker reads `usage.cost` from SSE `message_delta` and non-streaming body JSON into `providerCostUsd` — v1.2 (COST-02/03)
 - ✓ `estimateCostUSD()` skipped when provider-returned `costUsd` is available; live streaming covered via `extractStreamingUsage`/`parseUsage` override — v1.2
 - ✓ `requests.cost_usd` populated with real OpenRouter USD amounts; genuine `$0` preserved (`?? null`), estimate-`$0` collapses to `null`, COALESCE guards dual write — v1.2 (COST-04)
+- ✓ Dashboard Add Account form offers `openrouter-anthropic` mode and submits to `POST /api/accounts/openrouter-anthropic` — v1.3 Phase 11 (MGMT-03)
+- ✓ Dashboard provider-preference dialog gate widened to surface for `openrouter-anthropic` account cards — v1.3 Phase 11 (MGMT-04)
 
 ### Active
 
@@ -57,7 +59,7 @@ Stay current with upstream while running a stable personal instance enhanced wit
 - [ ] Native `cache_control` passthrough (5m/1h ttl) on the new provider
 - [ ] Provider preference injection reusing `openrouter_provider_preference` on the new provider
 - [ ] Cost tracking persisted to `requests.cost_usd` from the native Anthropic usage object
-- [ ] Dashboard provider-order dialog gated on the new provider type
+- [x] Dashboard provider-order dialog gated on the new provider type — validated in Phase 11 (MGMT-04); add-account form wiring validated in Phase 11 (MGMT-03)
 
 ### Future
 
@@ -151,4 +153,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-02 after starting milestone v1.3*
+*Last updated: 2026-06-04 after Phase 11 (dashboard-wiring) completion*
