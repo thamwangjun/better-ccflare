@@ -153,6 +153,25 @@ describe("SseRateLimitSniffer", () => {
 		expect(sniffer.firedReason).toBe("overloaded_error");
 	});
 
+	it("openrouter-anthropic provider fires on overloaded_error (Anthropic-shape) (FORK PATCH: FAIL-01 / D-01)", () => {
+		const sniffer = createSseRateLimitSniffer({
+			provider: "openrouter-anthropic",
+		});
+		const frame = encode(
+			'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+		);
+		expect(sniffer.feed(frame)).toBe(true);
+		expect(sniffer.firedReason).toBe("overloaded_error");
+	});
+
+	it("openrouter provider (OAI-shape) does NOT fire on overloaded_error (FORK PATCH: FAIL-01 regression guard)", () => {
+		const sniffer = createSseRateLimitSniffer({ provider: "openrouter" });
+		const frame = encode(
+			'event: error\ndata: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}\n\n',
+		);
+		expect(sniffer.feed(frame)).toBe(false);
+	});
+
 	it("non-Anthropic provider does NOT fire on overloaded_error", () => {
 		const sniffer = createSseRateLimitSniffer({
 			provider: "openai-compatible",
