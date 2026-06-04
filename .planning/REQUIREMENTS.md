@@ -39,8 +39,8 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 - [x] **MGMT-01**: User can add an `openrouter-anthropic` account via CLI (`--add-account --mode openrouter-anthropic`)
 - [x] **MGMT-02**: User can add an `openrouter-anthropic` account via HTTP API (`POST /api/accounts/openrouter-anthropic`)
-- [ ] **MGMT-03**: User can add an `openrouter-anthropic` account via the dashboard Add Account form
-- [ ] **MGMT-04**: User can set/clear provider order for `openrouter-anthropic` accounts via the dashboard provider-preference dialog
+- [x] **MGMT-03**: User can add an `openrouter-anthropic` account via the dashboard Add Account form
+- [x] **MGMT-04**: User can set/clear provider order for `openrouter-anthropic` accounts via the dashboard provider-preference dialog
 
 ## Future Requirements
 
@@ -81,8 +81,8 @@ Which phases cover which requirements. Populated during roadmap creation.
 | OBS-01 | Phase 10 | Complete |
 | MGMT-01 | Phase 10 | Complete |
 | MGMT-02 | Phase 10 | Complete |
-| MGMT-03 | Phase 11 | Pending |
-| MGMT-04 | Phase 11 | Pending |
+| MGMT-03 | Phase 11 | Complete |
+| MGMT-04 | Phase 11 | Complete |
 
 **Coverage:**
 - v1.3 requirements: 14 total

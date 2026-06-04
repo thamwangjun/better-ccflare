@@ -13,10 +13,10 @@ Plans:
 
 **Wave 1**
 
-- [ ] 11-01-PLAN.md — Wave 0 SSR tests (MGMT-03 form-render RED, MGMT-04 gate) + the provider-preference gate widen (MGMT-04 complete)
+- [x] 11-01-PLAN.md — Wave 0 SSR tests (MGMT-03 form-render RED, MGMT-04 gate) + the provider-preference gate widen (MGMT-04 complete)
 
 **Wave 2** *(depends on 11-01: form-render test must exist first)*
 
-- [ ] 11-02-PLAN.md — MGMT-03 full add-account wiring: SelectItem + form block + submit branch (AccountAddForm), addOpenRouterAnthropicAccount (api.ts), handler + prop pass-through (AccountsTab)
+- [x] 11-02-PLAN.md — MGMT-03 full add-account wiring: SelectItem + form block + submit branch (AccountAddForm), addOpenRouterAnthropicAccount (api.ts), handler + prop pass-through (AccountsTab)
 
 **UI hint**: yes
