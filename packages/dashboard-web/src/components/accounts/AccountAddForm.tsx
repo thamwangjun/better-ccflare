@@ -111,6 +111,28 @@ interface AccountAddFormProps {
 	onError: (error: string) => void;
 }
 
+/**
+ * Default/empty add-account form state. Single source of truth for every form
+ * reset — spread `{ ...INITIAL_ACCOUNT }` instead of re-declaring the field set,
+ * so adding a field or changing a default only has to happen here.
+ */
+const INITIAL_ACCOUNT = {
+	name: "",
+	mode: "claude-oauth" as AccountMode,
+	priority: 0,
+	apiKey: "",
+	customEndpoint: "",
+	projectId: "",
+	region: "global",
+	profile: "",
+	awsRegion: "",
+	crossRegionMode: "geographic" as "geographic" | "global" | "regional",
+	customBedrockModel: "",
+	opusModel: "",
+	sonnetModel: "",
+	haikuModel: "",
+};
+
 export function AccountAddForm({
 	onAddAccount,
 	onCompleteAccount,
@@ -134,22 +156,7 @@ export function AccountAddForm({
 	const [authStep, setAuthStep] = useState<"form" | "code">("form");
 	const [authCode, setAuthCode] = useState("");
 	const [sessionId, setSessionId] = useState("");
-	const [newAccount, setNewAccount] = useState({
-		name: "",
-		mode: "claude-oauth" as AccountMode,
-		priority: 0,
-		apiKey: "",
-		customEndpoint: "",
-		projectId: "",
-		region: "global",
-		profile: "",
-		awsRegion: "",
-		crossRegionMode: "geographic" as "geographic" | "global" | "regional",
-		customBedrockModel: "",
-		opusModel: "",
-		sonnetModel: "",
-		haikuModel: "",
-	});
+	const [newAccount, setNewAccount] = useState({ ...INITIAL_ACCOUNT });
 
 	// Qwen device flow state
 	const [qwenStep, setQwenStep] = useState<
@@ -273,22 +280,7 @@ export function AccountAddForm({
 							setQwenStep("idle");
 							setQwenAuthUrl("");
 							setQwenUserCode("");
-							setNewAccount({
-								name: "",
-								mode: "claude-oauth",
-								priority: 0,
-								apiKey: "",
-								customEndpoint: "",
-								projectId: "",
-								region: "global",
-								profile: "",
-								awsRegion: "",
-								crossRegionMode: "geographic",
-								customBedrockModel: "",
-								opusModel: "",
-								sonnetModel: "",
-								haikuModel: "",
-							});
+							setNewAccount({ ...INITIAL_ACCOUNT });
 							onSuccess();
 						}, 1500);
 					} else if (status.status === "error") {
@@ -342,22 +334,7 @@ export function AccountAddForm({
 							setCodexStep("idle");
 							setCodexVerificationUrl("");
 							setCodexUserCode("");
-							setNewAccount({
-								name: "",
-								mode: "claude-oauth",
-								priority: 0,
-								apiKey: "",
-								customEndpoint: "",
-								projectId: "",
-								region: "global",
-								profile: "",
-								awsRegion: "",
-								crossRegionMode: "geographic",
-								customBedrockModel: "",
-								opusModel: "",
-								sonnetModel: "",
-								haikuModel: "",
-							});
+							setNewAccount({ ...INITIAL_ACCOUNT });
 							onSuccess();
 						}, 1500);
 					} else if (status.status === "error") {
@@ -416,22 +393,7 @@ export function AccountAddForm({
 				priority: newAccount.priority,
 			});
 			// Reset form and signal success
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -457,22 +419,7 @@ export function AccountAddForm({
 				customModel: newAccount.customBedrockModel || undefined,
 			});
 			// Reset form and signal success
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -500,22 +447,7 @@ export function AccountAddForm({
 				}),
 			});
 			// Reset form and signal success
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -532,22 +464,7 @@ export function AccountAddForm({
 				priority: newAccount.priority,
 			});
 			// Reset form and signal success
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -578,22 +495,7 @@ export function AccountAddForm({
 					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
 			// Reset form and signal success
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -618,22 +520,7 @@ export function AccountAddForm({
 						? kiloModelMappings
 						: undefined,
 			});
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -654,22 +541,7 @@ export function AccountAddForm({
 				modelMappings:
 					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -690,22 +562,7 @@ export function AccountAddForm({
 				modelMappings:
 					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -727,22 +584,7 @@ export function AccountAddForm({
 				modelMappings:
 					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -768,22 +610,7 @@ export function AccountAddForm({
 					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
 			// Reset form and signal success
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -815,22 +642,7 @@ export function AccountAddForm({
 			});
 
 			// Reset form and signal success
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -848,22 +660,7 @@ export function AccountAddForm({
 				modelMappings:
 					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -885,22 +682,7 @@ export function AccountAddForm({
 				modelMappings:
 					Object.keys(modelMappings).length > 0 ? modelMappings : undefined,
 			});
-			setNewAccount({
-				name: "",
-				mode: "claude-oauth",
-				priority: 0,
-				apiKey: "",
-				customEndpoint: "",
-				projectId: "",
-				region: "global",
-				profile: "",
-				awsRegion: "",
-				crossRegionMode: "geographic",
-				customBedrockModel: "",
-				opusModel: "",
-				sonnetModel: "",
-				haikuModel: "",
-			});
+			setNewAccount({ ...INITIAL_ACCOUNT });
 			onSuccess();
 			return;
 		}
@@ -934,22 +716,7 @@ export function AccountAddForm({
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
-		setNewAccount({
-			name: "",
-			mode: "claude-oauth",
-			priority: 0,
-			apiKey: "",
-			customEndpoint: "",
-			projectId: "",
-			region: "global",
-			profile: "",
-			awsRegion: "",
-			crossRegionMode: "geographic",
-			customBedrockModel: "",
-			opusModel: "",
-			sonnetModel: "",
-			haikuModel: "",
-		});
+		setNewAccount({ ...INITIAL_ACCOUNT });
 		onSuccess();
 	};
 
@@ -967,22 +734,7 @@ export function AccountAddForm({
 		setAuthStep("form");
 		setAuthCode("");
 		setSessionId("");
-		setNewAccount({
-			name: "",
-			mode: "claude-oauth",
-			priority: 0,
-			apiKey: "",
-			customEndpoint: "",
-			projectId: "",
-			region: "global",
-			profile: "",
-			awsRegion: "",
-			crossRegionMode: "geographic",
-			customBedrockModel: "",
-			opusModel: "",
-			sonnetModel: "",
-			haikuModel: "",
-		});
+		setNewAccount({ ...INITIAL_ACCOUNT });
 		onCancel();
 	};
 
