@@ -83,7 +83,12 @@ Plans:
   4. A mid-stream `overloaded_error` frame on an `openrouter-anthropic` account triggers account failover (the sniffer includes the new provider in its shape set)
   5. With `BETTER_CCFLARE_DEBUG` set, the proxy logs `openrouter_metadata` (backend name, latency) extracted from the `message_stop` SSE event on each `openrouter-anthropic` request
 
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+- [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
+- [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
+- [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
+- [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
 
 ### Phase 11: Dashboard Wiring
 
@@ -95,7 +100,12 @@ Plans:
   1. The Add Account form surfaces `"OpenRouter Anthropic Messages (API Key)"` as a selectable mode option and successfully submits account creation to `POST /api/accounts/openrouter-anthropic`
   2. An `openrouter-anthropic` account card in the accounts list displays the provider-preference settings button (the dialog gate is widened from `openrouter`-only)
 
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+- [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
+- [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
+- [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
+- [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
 **UI hint**: yes
 
 ### Phase 12: Integration Test + Verification
@@ -110,7 +120,12 @@ Plans:
   3. Provider-preference injection fires on both request types: the OpenRouter backend selection matches the account's `openrouter_provider_preference` setting
   4. No requests are routed to `https://api.anthropic.com` (confirmed via logs) — the new provider always resolves to `https://openrouter.ai/api/v1/messages`
 
-**Plans**: TBD
+**Plans**: 4 plans
+Plans:
+- [ ] 10-01-PLAN.md — Type union foundations: PROVIDER_NAMES, PROVIDER_CONFIG, AccountListItem.mode, AddAccountOptions.mode
+- [ ] 10-02-PLAN.md — CLI wiring (dispatch branch + help text) + HTTP API handler + route registration
+- [ ] 10-03-PLAN.md — SSE sniffer ANTHROPIC_SHAPE_PROVIDERS extension with TDD verification (FAIL-01)
+- [ ] 10-04-PLAN.md — Provider metadata header injection + debug logging with TDD verification (OBS-01)
 
 ## Progress
 
