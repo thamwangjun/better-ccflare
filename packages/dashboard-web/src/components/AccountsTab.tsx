@@ -1,6 +1,6 @@
 import { AlertCircle, Plus } from "lucide-react";
 import { useState } from "react";
-import { type Account, api } from "../api";
+import { type Account, type AccountMode, api } from "../api";
 import { useAccounts, useRenameAccount } from "../hooks/queries";
 import { useApiError } from "../hooks/useApiError";
 import {
@@ -106,23 +106,7 @@ export function AccountsTab() {
 
 	const handleAddAccount = async (params: {
 		name: string;
-		mode:
-			| "claude-oauth"
-			| "console"
-			| "zai"
-			| "minimax"
-			| "anthropic-compatible"
-			| "openai-compatible"
-			| "nanogpt"
-			| "vertex-ai"
-			| "bedrock"
-			| "kilo"
-			| "openrouter"
-			| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic mode (MGMT-03)
-			| "alibaba-coding-plan"
-			| "codex"
-			| "qwen"
-			| "ollama";
+		mode: AccountMode;
 		priority: number;
 		customEndpoint?: string;
 	}) => {

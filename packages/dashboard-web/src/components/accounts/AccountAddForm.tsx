@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../api";
+import { type AccountMode, api } from "../../api";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -14,23 +14,7 @@ import {
 interface AccountAddFormProps {
 	onAddAccount: (params: {
 		name: string;
-		mode:
-			| "claude-oauth"
-			| "console"
-			| "zai"
-			| "minimax"
-			| "anthropic-compatible"
-			| "openai-compatible"
-			| "nanogpt"
-			| "vertex-ai"
-			| "bedrock"
-			| "kilo"
-			| "openrouter"
-			| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic mode (MGMT-03)
-			| "alibaba-coding-plan"
-			| "codex"
-			| "qwen"
-			| "ollama";
+		mode: AccountMode;
 		priority: number;
 		customEndpoint?: string;
 	}) => Promise<{ authUrl: string; sessionId: string }>;
@@ -152,24 +136,7 @@ export function AccountAddForm({
 	const [sessionId, setSessionId] = useState("");
 	const [newAccount, setNewAccount] = useState({
 		name: "",
-		mode: "claude-oauth" as
-			| "claude-oauth"
-			| "console"
-			| "zai"
-			| "minimax"
-			| "anthropic-compatible"
-			| "openai-compatible"
-			| "nanogpt"
-			| "vertex-ai"
-			| "bedrock"
-			| "kilo"
-			| "openrouter"
-			| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic state (MGMT-03)
-			| "alibaba-coding-plan"
-			| "codex"
-			| "qwen"
-			| "ollama"
-			| "ollama-cloud",
+		mode: "claude-oauth" as AccountMode,
 		priority: 0,
 		apiKey: "",
 		customEndpoint: "",
@@ -429,18 +396,7 @@ export function AccountAddForm({
 
 		const accountParams = {
 			name: newAccount.name,
-			mode: newAccount.mode as
-				| "claude-oauth"
-				| "console"
-				| "zai"
-				| "minimax"
-				| "anthropic-compatible"
-				| "openai-compatible"
-				| "bedrock"
-				| "kilo"
-				| "openrouter"
-				| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic cast (MGMT-03)
-				| "alibaba-coding-plan",
+			mode: newAccount.mode,
 			priority: newAccount.priority,
 			...(newAccount.customEndpoint && {
 				customEndpoint: newAccount.customEndpoint.trim(),
@@ -1055,23 +1011,9 @@ export function AccountAddForm({
 						<Label htmlFor="mode">Mode</Label>
 						<Select
 							value={newAccount.mode}
-							onValueChange={(
-								value:
-									| "claude-oauth"
-									| "console"
-									| "zai"
-									| "minimax"
-									| "anthropic-compatible"
-									| "openai-compatible"
-									| "bedrock"
-									| "kilo"
-									| "openrouter"
-									| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic onValueChange cast (MGMT-03)
-									| "codex"
-									| "qwen"
-									| "ollama"
-									| "ollama-cloud",
-							) => setNewAccount({ ...newAccount, mode: value })}
+							onValueChange={(value: AccountMode) =>
+								setNewAccount({ ...newAccount, mode: value })
+							}
 						>
 							<SelectTrigger id="mode">
 								<SelectValue />

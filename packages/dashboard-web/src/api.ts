@@ -18,6 +18,34 @@ import type {
 	RequestResponse,
 	StatsWithAccounts,
 } from "@better-ccflare/types";
+
+/**
+ * Shared union of all account modes supported by the dashboard add-account flow.
+ *
+ * Single source of truth — re-use this type instead of re-declaring the literal
+ * union (the form state, submit cast, onValueChange cast, and parent handler
+ * unions previously drifted apart). `ollama-cloud` is included for completeness
+ * even though it is routed via `onAddOllamaCloudAccount`, never the OAuth
+ * `onAddAccount`/`initAddAccount` path.
+ */
+export type AccountMode =
+	| "claude-oauth"
+	| "console"
+	| "zai"
+	| "minimax"
+	| "anthropic-compatible"
+	| "openai-compatible"
+	| "nanogpt"
+	| "vertex-ai"
+	| "bedrock"
+	| "kilo"
+	| "openrouter"
+	| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic mode (MGMT-03)
+	| "alibaba-coding-plan"
+	| "codex"
+	| "qwen"
+	| "ollama"
+	| "ollama-cloud";
 import { API_LIMITS, API_TIMEOUT } from "./constants";
 
 // Re-export types with dashboard-specific aliases for backward compatibility
@@ -245,23 +273,7 @@ class API extends HttpClient {
 
 	async initAddAccount(data: {
 		name: string;
-		mode:
-			| "claude-oauth"
-			| "console"
-			| "zai"
-			| "minimax"
-			| "anthropic-compatible"
-			| "openai-compatible"
-			| "nanogpt"
-			| "vertex-ai"
-			| "bedrock"
-			| "kilo"
-			| "openrouter"
-			| "openrouter-anthropic" // FORK PATCH: openrouter-anthropic mode (MGMT-03)
-			| "alibaba-coding-plan"
-			| "codex"
-			| "qwen"
-			| "ollama";
+		mode: AccountMode;
 		apiKey?: string;
 		priority: number;
 		customEndpoint?: string;
