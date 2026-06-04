@@ -193,12 +193,13 @@ No deprecations relevant. All patterns are the project's current conventions as 
 
 **Note:** A1 is the only assumption; the exact tail of the `openrouter` submit branch (post line 725) was not fully read but follows the established per-provider reset pattern. The planner should instruct the implementer to copy the full branch tail verbatim.
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Does `initAddAccount` (api.ts:259) need the new mode for any path other than the dedicated method?**
    - What we know: D-04/D-06 say extend the union at 259; the dedicated `addOpenRouterAnthropicAccount` method is the actual submit path.
    - What is unclear: whether `initAddAccount` is also invoked for openrouter today.
    - Recommendation: extend the union per D-06 regardless (mechanical, type-only); no behavioral risk.
+   - **RESOLVED:** extend union per D-06 (mechanical, type-only) — implemented in Plan 11-02 Task 1.
 
 ## Environment Availability
 
