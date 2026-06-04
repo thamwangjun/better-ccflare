@@ -29,16 +29,16 @@ Requirements for this milestone. Each maps to a roadmap phase.
 
 ### Failover (FAIL)
 
-- [ ] **FAIL-01**: Mid-stream `overloaded_error` frames on the new provider trigger account failover (`ANTHROPIC_SHAPE_PROVIDERS` extended)
+- [x] **FAIL-01**: Mid-stream `overloaded_error` frames on the new provider trigger account failover (`ANTHROPIC_SHAPE_PROVIDERS` extended)
 
 ### Observability (OBS)
 
-- [ ] **OBS-01**: User can opt into debug logging of which OpenRouter backend served each request (`openrouter_metadata` from `message_stop`)
+- [x] **OBS-01**: User can opt into debug logging of which OpenRouter backend served each request (`openrouter_metadata` from `message_stop`)
 
 ### Management (MGMT)
 
-- [ ] **MGMT-01**: User can add an `openrouter-anthropic` account via CLI (`--add-account --mode openrouter-anthropic`)
-- [ ] **MGMT-02**: User can add an `openrouter-anthropic` account via HTTP API (`POST /api/accounts/openrouter-anthropic`)
+- [x] **MGMT-01**: User can add an `openrouter-anthropic` account via CLI (`--add-account --mode openrouter-anthropic`)
+- [x] **MGMT-02**: User can add an `openrouter-anthropic` account via HTTP API (`POST /api/accounts/openrouter-anthropic`)
 - [ ] **MGMT-03**: User can add an `openrouter-anthropic` account via the dashboard Add Account form
 - [ ] **MGMT-04**: User can set/clear provider order for `openrouter-anthropic` accounts via the dashboard provider-preference dialog
 
@@ -77,10 +77,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 | ROUTE-02 | Phase 9 | Complete |
 | COST-01 | Phase 9 | Complete |
 | COST-02 | Phase 9 | Complete |
-| FAIL-01 | Phase 10 | Pending |
-| OBS-01 | Phase 10 | Pending |
-| MGMT-01 | Phase 10 | Pending |
-| MGMT-02 | Phase 10 | Pending |
+| FAIL-01 | Phase 10 | Complete |
+| OBS-01 | Phase 10 | Complete |
+| MGMT-01 | Phase 10 | Complete |
+| MGMT-02 | Phase 10 | Complete |
 | MGMT-03 | Phase 11 | Pending |
 | MGMT-04 | Phase 11 | Pending |
 
