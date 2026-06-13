@@ -30,6 +30,16 @@ New tables go in BOTH `ensureSchemaPg()` and `runMigrationsPg()` (use `CREATE TA
 - **Commits:** run `git status` first to note pre-existing changes (distinguish yours from theirs). Use `git add <specific-files>` (never `git add .`) to avoid committing `inline-worker.ts`.
 - **Commit prefixes** (drive the release changelog): `feat:|add:|new:` (features), `fix:|bug:|resolve:` (fixes), `security:|vulnerabilit:|redact:|ReDoS:` (security), `improve:|enhance:|update:|refactor:` (improvements). Acknowledgement commits use `chore: acknowledge <name> for PR #<N>` (excluded from release notes).
 
+## Pre-PR Review with Greptile
+
+Before opening a pull request, run a Greptile review from the terminal:
+
+```bash
+greptile review
+```
+
+Greptile reviews your branch against its base branch and shows comments directly in the terminal. Run this after checking out your branch and before pushing/opening a PR.
+
 ## PR Review Against Current Main (MANDATORY)
 
 Before reviewing/merging any PR, find the merge base and check what main added since the PR branched:

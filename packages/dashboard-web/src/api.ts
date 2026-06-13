@@ -9,10 +9,12 @@ import type {
 	AgentUpdatePayload,
 	AgentWorkspace,
 	AnalyticsResponse,
+	CacheInsightsResponse,
 	Combo,
 	ComboFamilyAssignment,
 	ComboSlot,
 	ComboWithSlots,
+	ContextInsightsResponse,
 	LogEvent,
 	RequestPayload,
 	RequestResponse,
@@ -1004,6 +1006,29 @@ class API extends HttpClient {
 
 			throw error;
 		}
+	}
+
+	async getCacheInsights(
+		range = "24h",
+		threshold?: number,
+	): Promise<CacheInsightsResponse> {
+		const params = new URLSearchParams({ range });
+
+		if (threshold !== undefined) {
+			params.append("threshold", String(threshold));
+		}
+
+		return this.get<CacheInsightsResponse>(
+			`/api/insights/cache?${params.toString()}`,
+		);
+	}
+
+	async getContextInsights(range = "24h"): Promise<ContextInsightsResponse> {
+		const params = new URLSearchParams({ range });
+
+		return this.get<ContextInsightsResponse>(
+			`/api/insights/context?${params.toString()}`,
+		);
 	}
 
 	// Batch analytics requests for improved performance
@@ -2292,6 +2317,24 @@ class API extends HttpClient {
 			});
 			throw error;
 		}
+	}
+	async getAlerts(limit = 100): Promise<{
+		alerts: import("@better-ccflare/types").AlertEvent[];
+		unacknowledgedCount: number;
+	}> {
+		const res = await this.get<{
+			alerts: import("@better-ccflare/types").AlertEvent[];
+			unacknowledgedCount: number;
+		}>(`/api/insights/alerts?limit=${Math.min(Math.max(1, limit), 500)}`);
+		return res;
+	}
+
+	async acknowledgeAlert(id: string): Promise<void> {
+		await this.post(`/api/insights/alerts/${encodeURIComponent(id)}`);
+	}
+
+	async acknowledgeAllAlerts(): Promise<void> {
+		await this.post("/api/insights/alerts/acknowledge-all");
 	}
 }
 
