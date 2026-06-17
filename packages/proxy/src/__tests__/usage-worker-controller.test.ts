@@ -9,14 +9,13 @@
  * These tests drive a MOCK worker (no real Bun Worker spawn). They will FAIL with
  * "Cannot find module" or similar until UsageWorkerController is implemented.
  */
-import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 
 // ── Types that will exist once Task 2 is implemented ─────────────────────────
-import type { UsageWorkerController, UsageWorkerHealth } from "../usage-worker-controller";
+import type { UsageWorkerHealth } from "../usage-worker-controller";
 import type {
 	ChunkMessage,
 	ConfigUpdateMessage,
-	EndMessage,
 	StartMessage,
 } from "../worker-messages";
 
@@ -24,7 +23,7 @@ import type {
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeStartMsg(requestId = "req-1"): StartMessage {
+function _makeStartMsg(requestId = "req-1"): StartMessage {
 	return {
 		type: "start",
 		messageId: crypto.randomUUID(),
@@ -61,7 +60,7 @@ function makeChunkMsg(requestId: string, buf: ArrayBuffer): ChunkMessage {
 }
 
 /** Reconstructs a UsageWorkerController using a fully controllable mock worker. */
-function makeControllerWithMockWorker() {
+function _makeControllerWithMockWorker() {
 	// We build the controller module by importing the real class then monkeypatching
 	// the internal worker factory so no real Worker is spawned.
 
@@ -181,12 +180,12 @@ describe("UsageWorkerController — message contract", () => {
 			health.state,
 		);
 		expect(typeof health.pendingAcks).toBe("number");
-		expect(health.lastError === null || typeof health.lastError === "string").toBe(
-			true,
-		);
-		expect(health.startedAt === null || typeof health.startedAt === "number").toBe(
-			true,
-		);
+		expect(
+			health.lastError === null || typeof health.lastError === "string",
+		).toBe(true);
+		expect(
+			health.startedAt === null || typeof health.startedAt === "number",
+		).toBe(true);
 	});
 
 	it("isReady returns false before start is called", async () => {
@@ -201,7 +200,8 @@ describe("UsageWorkerController — ordering (buffer-until-ready)", () => {
 		const mod = await import("../usage-worker-controller");
 
 		const flushedChunks: string[] = [];
-		const onChunkFlushed = (requestId: string) => flushedChunks.push(requestId);
+		const _onChunkFlushed = (requestId: string) =>
+			flushedChunks.push(requestId);
 
 		// Build a minimal mock: intercept postMessage to record flushed order
 		// The controller calls worker.postMessage(msg, transfer)

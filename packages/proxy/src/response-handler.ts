@@ -14,6 +14,43 @@ import type { EndMessage, StartMessage } from "./worker-messages";
 
 const log = new Logger("ResponseHandler");
 
+/**
+ * Safety guard for usage-accounting dispatch.
+ *
+ * A throw in handleStart / handleChunk / handleEnd must NEVER reach
+ * teeStream's pull() catch (stream-tee.ts:57-60), which calls
+ * controller.error(error) and discards the already-enqueued client chunk.
+ * This guard logs + swallows so a usage-accounting failure is invisible to
+ * the client stream. (#244 / #245 regression fix)
+ */
+function safeHandleStart(msg: StartMessage): void {
+	try {
+		getUsageCollector().handleStart(msg);
+	} catch (err: unknown) {
+		log.warn(`handleStart swallowed for request ${msg.requestId}:`, err);
+	}
+}
+
+/**
+ * Copy-then-dispatch guard for chunk data.
+ *
+ * 1. Makes a standalone copy of the chunk via value.slice() so the client's
+ *    enqueued buffer is never detached (aliasing rule from CONTEXT.md).
+ * 2. Wraps the dispatch in try/catch so a collector throw cannot propagate to
+ *    teeStream's pull() catch and abort the client stream.
+ */
+function safeHandleChunk(requestId: string, value: Uint8Array): void {
+	try {
+		// value is already enqueued to the client by teeStream (stream-tee.ts:39).
+		// slice() produces a fresh Uint8Array with its own ArrayBuffer (byteOffset=0,
+		// exact bytes). We pass the copy to the collector; the original is untouched.
+		const copy = value.slice();
+		getUsageCollector().handleChunk(requestId, copy);
+	} catch (err: unknown) {
+		log.warn(`handleChunk swallowed for request ${requestId}:`, err);
+	}
+}
+
 function fireAndForgetEnd(msg: EndMessage): void {
 	getUsageCollector()
 		.handleEnd(msg)
@@ -166,7 +203,7 @@ export async function forwardToClient(
 			retryAttempt,
 			failoverAttempts,
 		};
-		getUsageCollector().handleStart(startMessage);
+		safeHandleStart(startMessage);
 	}
 
 	// Emit request start event for real-time dashboard
@@ -196,7 +233,7 @@ export async function forwardToClient(
 
 		const onChunk = (value: Uint8Array): void => {
 			if (shouldProcessRequest) {
-				getUsageCollector().handleChunk(requestId, value);
+				safeHandleChunk(requestId, value);
 			}
 
 			// Mid-stream rate-limit detection. The sniffer

@@ -116,7 +116,7 @@ describe("aliasing: copy-then-transfer contract", () => {
 		// but we verify the CONTRACT: the copy's buffer should be the one that
 		// gets passed to postMessage, not the original's.
 		const value = new TextEncoder().encode("SSE chunk data here");
-		const copy = value.slice();
+		const _copy = value.slice();
 
 		// Only the COPY's buffer should be in the transfer list.
 		// The original must still be readable after copy is "transferred".
@@ -166,12 +166,17 @@ describe("aliasing: onChunk dispatch in response-handler", () => {
 		const dispatchedChunks: Array<Uint8Array | ArrayBuffer> = [];
 		const collector = {
 			handleStart: mock(() => {}),
-			handleChunk: mock((_requestId: string, data: Uint8Array | ArrayBuffer) => {
-				dispatchedChunks.push(data);
-			}),
+			handleChunk: mock(
+				(_requestId: string, data: Uint8Array | ArrayBuffer) => {
+					dispatchedChunks.push(data);
+				},
+			),
 			handleEnd: mock(() => Promise.resolve()),
 		};
-		const spy = spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue(
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
 			collector as unknown as usageCollectorModule.UsageCollector,
 		);
 
@@ -245,7 +250,10 @@ describe("aliasing: onChunk dispatch in response-handler", () => {
 			}),
 			handleEnd: mock(() => Promise.resolve()),
 		};
-		const spy = spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue(
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
 			collector as unknown as usageCollectorModule.UsageCollector,
 		);
 

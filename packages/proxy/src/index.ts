@@ -42,9 +42,14 @@ export {
 export {
 	drainUsageCollector,
 	getUsageCollectorHealth,
+	getUsageWorker,
+	getUsageWorkerHealth,
 	handleProxy,
 	initProxy,
 	type ProxyContext,
+	sendWorkerConfigUpdate,
+	startUsageWorker,
+	terminateUsageWorker,
 } from "./proxy";
 export {
 	forwardToClient,
@@ -52,6 +57,7 @@ export {
 } from "./response-handler";
 export type { ProxyRequest, ProxyResponse } from "./types";
 export type { UsageCollectorHealth } from "./usage-collector";
+export type { UsageWorkerHealth } from "./usage-worker-controller";
 export type {
 	ChunkMessage,
 	ControlMessage,

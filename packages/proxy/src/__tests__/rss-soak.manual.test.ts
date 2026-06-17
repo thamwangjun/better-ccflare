@@ -76,7 +76,8 @@ describe("RSS soak — off-heap leak regression (#244)", () => {
 			const waitReady = async () => {
 				const deadline = Date.now() + 30_000;
 				while (!controller.isReady()) {
-					if (Date.now() > deadline) throw new Error("Worker did not become ready");
+					if (Date.now() > deadline)
+						throw new Error("Worker did not become ready");
 					await new Promise((r) => setTimeout(r, 100));
 				}
 			};

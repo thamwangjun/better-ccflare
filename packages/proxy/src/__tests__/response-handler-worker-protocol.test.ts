@@ -16,7 +16,7 @@
  *
  * These tests will FAIL until Task 2 wires forwardToClient to the controller.
  */
-import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { forwardToClient } from "../response-handler";
 
 // ── module under spy ──────────────────────────────────────────────────────────
@@ -32,7 +32,10 @@ import * as usageCollectorModule from "../usage-collector";
 // Helpers
 // ---------------------------------------------------------------------------
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+async function waitFor(
+	predicate: () => boolean,
+	timeoutMs = 1000,
+): Promise<void> {
 	const start = Date.now();
 	while (!predicate()) {
 		if (Date.now() - start > timeoutMs) throw new Error("Timed out");
@@ -42,7 +45,11 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
 
 interface MockControllerDispatch {
 	starts: Record<string, unknown>[];
-	chunks: Array<{ requestId: string; data: ArrayBuffer; transfer: Transferable[] }>;
+	chunks: Array<{
+		requestId: string;
+		data: ArrayBuffer;
+		transfer: Transferable[];
+	}>;
 	ends: Record<string, unknown>[];
 	errors: Error[];
 	/** Whether controller.error was called (must NEVER be true) */
@@ -60,12 +67,18 @@ interface MockControllerDispatch {
  * We spy on getUsageCollector to verify the current (broken) path fails the
  * guard test, documenting what Task 2 must change.
  */
-function createMockCollectorSeam(): MockControllerDispatch & { restore: () => void } {
+function createMockCollectorSeam(): MockControllerDispatch & {
+	restore: () => void;
+} {
 	const starts: Record<string, unknown>[] = [];
-	const chunks: Array<{ requestId: string; data: ArrayBuffer; transfer: Transferable[] }> = [];
+	const chunks: Array<{
+		requestId: string;
+		data: ArrayBuffer;
+		transfer: Transferable[];
+	}> = [];
 	const ends: Record<string, unknown>[] = [];
 	const errors: Error[] = [];
-	let controllerErrorCalled = false;
+	const controllerErrorCalled = false;
 
 	const collector = {
 		handleStart: mock((msg: Record<string, unknown>) => {
@@ -170,7 +183,9 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 					path: "/v1/messages",
 					account: null,
 					requestHeaders: new Headers(),
-					requestBody: new TextEncoder().encode(JSON.stringify({ hello: "world" })),
+					requestBody: new TextEncoder().encode(
+						JSON.stringify({ hello: "world" }),
+					),
 					project: "test-project",
 					response: new Response("{}", {
 						status: 200,
@@ -192,7 +207,9 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 
 	it("dispatches base64 requestBody when store_payloads=true", async () => {
 		const { starts, restore } = createMockCollectorSeam();
-		const body = JSON.stringify({ messages: [{ role: "user", content: "hi" }] });
+		const body = JSON.stringify({
+			messages: [{ role: "user", content: "hi" }],
+		});
 		try {
 			await forwardToClient(
 				{
@@ -311,7 +328,10 @@ describe("forwardToClient → worker dispatch: guard regression (#245)", () => {
 			handleEnd: mock(() => Promise.resolve()),
 		};
 
-		const spy = spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue(
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
 			throwingCollector as unknown as usageCollectorModule.UsageCollector,
 		);
 
@@ -376,7 +396,10 @@ describe("forwardToClient → worker dispatch: guard regression (#245)", () => {
 			handleEnd: mock(() => Promise.resolve()),
 		};
 
-		const spy = spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue(
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
 			throwingCollector as unknown as usageCollectorModule.UsageCollector,
 		);
 
@@ -458,7 +481,11 @@ describe("forwardToClient → worker dispatch: streaming tee (regression)", () =
 
 			expect(chunks.length).toBe(2);
 			expect(starts[0]).toMatchObject({ type: "start", requestId: "req-tee" });
-			expect(ends[0]).toMatchObject({ type: "end", requestId: "req-tee", success: true });
+			expect(ends[0]).toMatchObject({
+				type: "end",
+				requestId: "req-tee",
+				success: true,
+			});
 		} finally {
 			restore();
 		}
