@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.3
-milestone_name: OpenRouter Anthropic Messages Provider
-status: milestone_complete
-last_updated: 2026-06-04T10:20:41.838Z
-last_activity: 2026-06-04 -- Phase 11 execution started
+milestone_name: milestone
+status: completed
+stopped_at: "260617-3fb Task 2 complete (2026-06-17)"
+last_updated: "2026-06-17T00:00:00.000Z"
+last_activity: 2026-06-04
 progress:
   total_phases: 1
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 2
-  completed_plans: 7
-  percent: 0
-stopped_at: Milestone complete (Phase 11 was final phase)
+  completed_plans: 2
+  percent: 100
 ---
 
 # Project State
@@ -94,11 +94,12 @@ None.
 | 260602-8l6 | Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies | 2026-06-02 | 47703b18 | [260602-8l6-refactor-cost-02-cost-03-tests-to-exerci](./quick/260602-8l6-refactor-cost-02-cost-03-tests-to-exerci/) |
 | 260602-eax | Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause | 2026-06-02 | d3a7ac77 | [260602-eax-fix-saverequest-cost-usd-unconditional-o](./quick/260602-eax-fix-saverequest-cost-usd-unconditional-o/) |
 | 260613-mrg | Resolve upstream/main merge — keep fork CLAUDE.md; port providerCostUsd into usage-collector after upstream deleted the worker | 2026-06-13 | be598d89 | [260613-mrg-merge-upstream-main-resolve-confli](./quick/260613-mrg-merge-upstream-main-resolve-confli/) |
+| 260617-3fb | Restore async Worker-offloaded usage collector with transferable ArrayBuffers + safe dispatch guard (#244) | 2026-06-17 | bbe9835e | [260617-3fb-restore-async-worker-offloaded-usage-col](./quick/260617-3fb-restore-async-worker-offloaded-usage-col/) |
 
 ## Session Continuity
 
-Last session: 2026-06-04T09:35:07.954Z
-Stopped at: Phase 11 context gathered
+Last session: 2026-06-17T02:43:35.566Z
+Stopped at: context exhaustion at 76% (2026-06-17)
 Resume file: .planning/phases/11-dashboard-wiring/11-CONTEXT.md
 
 ## Operator Next Steps
