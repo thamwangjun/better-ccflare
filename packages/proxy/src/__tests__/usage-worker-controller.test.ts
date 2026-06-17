@@ -153,13 +153,17 @@ describe("UsageWorkerController — message contract", () => {
 		}
 	});
 
-	it("postMessage throws when state is not ready", async () => {
+	it("postMessage drops chunk silently in stopped/shutting_down state (WR-02)", async () => {
+		// WR-02: chunk messages arriving in terminal states must drop+log, NOT throw.
+		// The guard in safeHandleChunk (response-handler.ts) swallows throws anyway,
+		// but making the contract clean avoids surprising callers.
 		const mod = await import("../usage-worker-controller");
 		const ctrl = new mod.UsageWorkerController(() => {}, undefined);
 		// Controller starts in "stopped" state
 
 		const msg: ChunkMessage = makeChunkMsg("req-1", new ArrayBuffer(4));
-		expect(() => ctrl.postMessage(msg)).toThrow();
+		// Must NOT throw — drops silently
+		expect(() => ctrl.postMessage(msg)).not.toThrow();
 	});
 
 	it("ConfigUpdateMessage shape carries storePayloads boolean", () => {
@@ -219,20 +223,17 @@ describe("UsageWorkerController — ordering (buffer-until-ready)", () => {
 		try {
 			// We cannot easily make a real worker signal "ready" in a unit test,
 			// so this test documents the EXPECTED behavior as a spec:
-			//   1. When controller is in "starting" state, postMessage should buffer
-			//      or throw (not silently drop). Task 2 implementation must flush
-			//      buffered messages in order once "ready" signal arrives.
+			//   Chunks posted to a "stopped" controller drop silently (WR-02).
+			//   The ordering contract for "starting"-state buffering is tested
+			//   separately in integration or via the ready-buffer cap test.
 			const ctrl = new mod.UsageWorkerController(() => {}, undefined);
 
-			// Before ready: postMessage should throw (not silently discard)
+			// In "stopped" state, postMessage should drop silently (WR-02 — no throw)
 			const buf = new ArrayBuffer(4);
 			expect(() =>
 				ctrl.postMessage({ type: "chunk", requestId: "req-a", data: buf }),
-			).toThrow();
+			).not.toThrow();
 
-			// Ordering contract: if buffering is implemented, N buffered chunks
-			// must flush in the order they were queued. This is enforced by the
-			// integration test in Task 2, but we verify the spec here.
 			// Assert the controller is NOT ready (pre-condition for this test)
 			expect(ctrl.isReady()).toBe(false);
 		} finally {

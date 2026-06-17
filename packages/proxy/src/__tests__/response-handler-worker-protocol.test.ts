@@ -1,32 +1,26 @@
 /**
  * Tests for forwardToClient → UsageWorkerController dispatch protocol.
  *
- * REWRITTEN from the collector-mock seam (spyOn getUsageCollector) to the
- * controller-dispatch seam (spyOn getUsageWorker / safe dispatch).
+ * Spies on getUsageWorker() from proxy.ts (the controller-dispatch seam)
+ * to verify that forwardToClient correctly routes usage accounting through
+ * the worker controller rather than the synchronous main-thread collector.
  *
  * Covers:
  *   - handleStart dispatch with correct StartMessage fields
  *   - onChunk dispatch: the COPY is dispatched (not the client's value),
- *     with a non-empty transfer list
- *   - Guard regression: a throwing dispatch MUST NOT call controller.error()
+ *     with a non-empty transfer list (via controller.postMessage internally)
+ *   - Guard regression: a throwing postMessage MUST NOT call controller.error()
  *     and MUST NOT prevent client bytes from being delivered
  *   - onClose / onError fire EndMessage via guarded path
  *   - shouldProcessRequest filter still works (count_tokens, auto-refresh probes)
  *   - store_payloads=false sends null requestBody
- *
- * These tests will FAIL until Task 2 wires forwardToClient to the controller.
  */
 import { describe, expect, it, mock, spyOn } from "bun:test";
-import { forwardToClient } from "../response-handler";
-
 // ── module under spy ──────────────────────────────────────────────────────────
-// Task 2 will introduce a getUsageWorker export from proxy.ts (or a dedicated
-// module). Until then these tests import the *current* usage-collector module
-// so they compile — but the spy target will shift in Task 2.
-//
-// Phase: RED — these tests assert the NEW controller seam and will fail because
-// forwardToClient still calls getUsageCollector() (collector seam).
-import * as usageCollectorModule from "../usage-collector";
+// forwardToClient calls getUsageWorker() from proxy.ts to obtain the
+// UsageWorkerController. We spy on that accessor to intercept postMessage calls.
+import * as proxyModule from "../proxy";
+import { forwardToClient } from "../response-handler";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -43,71 +37,55 @@ async function waitFor(
 	}
 }
 
-interface MockControllerDispatch {
+interface MockWorkerDispatch {
 	starts: Record<string, unknown>[];
 	chunks: Array<{
 		requestId: string;
 		data: ArrayBuffer;
-		transfer: Transferable[];
 	}>;
 	ends: Record<string, unknown>[];
-	errors: Error[];
 	/** Whether controller.error was called (must NEVER be true) */
 	controllerErrorCalled: boolean;
 }
 
 /**
- * Creates a mock that intercepts the controller dispatch seam.
+ * Creates a mock UsageWorkerController that intercepts postMessage calls.
  *
- * In Task 2, forwardToClient will call something like:
- *   safePostChunk(worker, requestId, copy.buffer)
- * or:
- *   worker.postMessage(chunkMsg, [copy.buffer])
- *
- * We spy on getUsageCollector to verify the current (broken) path fails the
- * guard test, documenting what Task 2 must change.
+ * isReady() returns true so that start/end messages are dispatched
+ * (the controller only dispatches non-chunk messages when ready).
  */
-function createMockCollectorSeam(): MockControllerDispatch & {
+function createMockWorkerSeam(): MockWorkerDispatch & {
 	restore: () => void;
 } {
 	const starts: Record<string, unknown>[] = [];
-	const chunks: Array<{
-		requestId: string;
-		data: ArrayBuffer;
-		transfer: Transferable[];
-	}> = [];
+	const chunks: Array<{ requestId: string; data: ArrayBuffer }> = [];
 	const ends: Record<string, unknown>[] = [];
-	const errors: Error[] = [];
 	const controllerErrorCalled = false;
 
-	const collector = {
-		handleStart: mock((msg: Record<string, unknown>) => {
-			starts.push(msg);
-		}),
-		handleChunk: mock((requestId: string, data: Uint8Array) => {
-			// In the OLD seam, data is the raw Uint8Array value — not a copy
-			// In the NEW seam, data should be a standalone ArrayBuffer copy
-			chunks.push({
-				requestId,
-				data: data.buffer as ArrayBuffer,
-				transfer: [], // OLD path doesn't pass transfer list
-			});
-		}),
-		handleEnd: mock((msg: Record<string, unknown>) => {
-			ends.push(msg);
-			return Promise.resolve();
+	const mockController = {
+		isReady: mock(() => true),
+		postMessage: mock((msg: Record<string, unknown>) => {
+			if (msg.type === "start") {
+				starts.push(msg);
+			} else if (msg.type === "chunk") {
+				chunks.push({
+					requestId: msg.requestId as string,
+					data: msg.data as ArrayBuffer,
+				});
+			} else if (msg.type === "end") {
+				ends.push(msg);
+			}
 		}),
 	};
 
-	const spy = spyOn(usageCollectorModule, "getUsageCollector").mockReturnValue(
-		collector as unknown as usageCollectorModule.UsageCollector,
+	const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
+		mockController as unknown as ReturnType<typeof proxyModule.getUsageWorker>,
 	);
 
 	return {
 		starts,
 		chunks,
 		ends,
-		errors,
 		controllerErrorCalled,
 		restore: () => spy.mockRestore(),
 	};
@@ -136,7 +114,7 @@ function createCtx(storePayloads = true) {
 
 describe("forwardToClient → worker dispatch: message contract", () => {
 	it("dispatches StartMessage with required fields", async () => {
-		const { starts, restore } = createMockCollectorSeam();
+		const { starts, restore } = createMockWorkerSeam();
 		try {
 			const ctx = createCtx();
 			await forwardToClient(
@@ -174,7 +152,7 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 	});
 
 	it("dispatches null requestBody when store_payloads=false", async () => {
-		const { starts, restore } = createMockCollectorSeam();
+		const { starts, restore } = createMockWorkerSeam();
 		try {
 			await forwardToClient(
 				{
@@ -206,7 +184,7 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 	});
 
 	it("dispatches base64 requestBody when store_payloads=true", async () => {
-		const { starts, restore } = createMockCollectorSeam();
+		const { starts, restore } = createMockWorkerSeam();
 		const body = JSON.stringify({
 			messages: [{ role: "user", content: "hi" }],
 		});
@@ -237,7 +215,7 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 	});
 
 	it("sends EndMessage on non-streaming close", async () => {
-		const { ends, restore } = createMockCollectorSeam();
+		const { ends, restore } = createMockWorkerSeam();
 		try {
 			const ctx = createCtx();
 			const response = await forwardToClient(
@@ -273,7 +251,7 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 	});
 
 	it("filters count_tokens path on openai-compatible provider", async () => {
-		const { starts, restore } = createMockCollectorSeam();
+		const { starts, restore } = createMockWorkerSeam();
 		try {
 			const ctx = createCtx();
 			ctx.provider.name = "openai-compatible";
@@ -307,32 +285,27 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 // ---------------------------------------------------------------------------
 // Suite 2: Guard regression — the critical #245 regression test
 //
-// A throw in onChunk / handleStart dispatch MUST:
-//   1. NOT call controller.error()  (currently FAILS — no guard)
+// A throw in onChunk / postMessage dispatch MUST:
+//   1. NOT call controller.error()  (the stream tee must deliver all bytes)
 //   2. NOT prevent client bytes from being delivered
-//
-// These tests will PASS in the OLD seam (no guard) only if they're written to
-// assert the DESIRED behavior — i.e., the test itself must FAIL on the current
-// code, confirming the RED state.
 // ---------------------------------------------------------------------------
 
 describe("forwardToClient → worker dispatch: guard regression (#245)", () => {
-	it("GUARD: a throwing handleChunk does NOT call controller.error and bytes are delivered", async () => {
-		// This is the critical regression test.
-		// Setup: mock collector whose handleChunk THROWS
-		const throwingCollector = {
-			handleStart: mock(() => {}),
-			handleChunk: mock((_requestId: string, _data: Uint8Array) => {
-				throw new Error("simulated worker dispatch failure");
+	it("GUARD: a throwing postMessage does NOT call controller.error and bytes are delivered", async () => {
+		// Setup: mock worker whose postMessage THROWS on chunk messages
+		const throwingController = {
+			isReady: mock(() => true),
+			postMessage: mock((msg: Record<string, unknown>) => {
+				if (msg.type === "chunk") {
+					throw new Error("simulated worker dispatch failure");
+				}
 			}),
-			handleEnd: mock(() => Promise.resolve()),
 		};
 
-		const spy = spyOn(
-			usageCollectorModule,
-			"getUsageCollector",
-		).mockReturnValue(
-			throwingCollector as unknown as usageCollectorModule.UsageCollector,
+		const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
+			throwingController as unknown as ReturnType<
+				typeof proxyModule.getUsageWorker
+			>,
 		);
 
 		try {
@@ -371,15 +344,8 @@ describe("forwardToClient → worker dispatch: guard regression (#245)", () => {
 				ctx,
 			);
 
-			// The client must receive ALL bytes — the throw in handleChunk must be
-			// swallowed, not propagated to teeStream's pull() catch.
-			//
-			// EXPECTED (after Task 2 guard is implemented):
-			//   text === "data: chunk-one\n\ndata: chunk-two\n\n"
-			//
-			// CURRENT STATE (no guard): the throw propagates to controller.error(),
-			// which discards the enqueued chunk → the stream is broken → this
-			// assertion FAILS, confirming RED.
+			// The client must receive ALL bytes — the throw in postMessage must be
+			// swallowed by safeHandleChunk, not propagated to teeStream's pull() catch.
 			const text = await response.text();
 			expect(text).toBe("data: chunk-one\n\ndata: chunk-two\n\n");
 		} finally {
@@ -387,30 +353,26 @@ describe("forwardToClient → worker dispatch: guard regression (#245)", () => {
 		}
 	});
 
-	it("GUARD: a throwing handleStart does NOT abort the response", async () => {
-		const throwingCollector = {
-			handleStart: mock(() => {
-				throw new Error("handleStart failure");
+	it("GUARD: a throwing postMessage for handleStart does NOT abort the response", async () => {
+		const throwingController = {
+			isReady: mock(() => true),
+			postMessage: mock((msg: Record<string, unknown>) => {
+				if (msg.type === "start") {
+					throw new Error("handleStart failure");
+				}
 			}),
-			handleChunk: mock(() => {}),
-			handleEnd: mock(() => Promise.resolve()),
 		};
 
-		const spy = spyOn(
-			usageCollectorModule,
-			"getUsageCollector",
-		).mockReturnValue(
-			throwingCollector as unknown as usageCollectorModule.UsageCollector,
+		const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
+			throwingController as unknown as ReturnType<
+				typeof proxyModule.getUsageWorker
+			>,
 		);
 
 		try {
 			const ctx = createCtx();
 
-			// EXPECTED (after guard): resolves to a Response
-			// CURRENT: throws or resolves depending on where in the call stack it
-			// propagates. forwardToClient calls handleStart() synchronously before
-			// teeStream, so currently it throws and the response is never returned.
-			// That makes this test RED.
+			// safeHandleStart swallows throws — response must still be returned
 			await expect(
 				forwardToClient(
 					{
@@ -443,7 +405,7 @@ describe("forwardToClient → worker dispatch: guard regression (#245)", () => {
 
 describe("forwardToClient → worker dispatch: streaming tee (regression)", () => {
 	it("streams all chunks to the client and sends EndMessage", async () => {
-		const { starts, chunks, ends, restore } = createMockCollectorSeam();
+		const { starts, chunks, ends, restore } = createMockWorkerSeam();
 		try {
 			const ctx = createCtx();
 			ctx.provider.isStreamingResponse = () => true;
@@ -480,6 +442,8 @@ describe("forwardToClient → worker dispatch: streaming tee (regression)", () =
 			await waitFor(() => ends.length > 0);
 
 			expect(chunks.length).toBe(2);
+			// Verify chunk messages carry ArrayBuffer (not Uint8Array) — transfer protocol
+			expect(chunks[0].data).toBeInstanceOf(ArrayBuffer);
 			expect(starts[0]).toMatchObject({ type: "start", requestId: "req-tee" });
 			expect(ends[0]).toMatchObject({
 				type: "end",

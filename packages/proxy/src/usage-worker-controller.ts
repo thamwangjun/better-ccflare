@@ -120,7 +120,9 @@ export class UsageWorkerController {
 			});
 			this.lastError = msg;
 
-			if (this.state === "ready") {
+			// WR-01: restart on error in ANY non-terminal state (starting OR ready),
+			// not only "ready" — startup crashes must not wait 60s for the timer.
+			if (this.state === "starting" || this.state === "ready") {
 				this.attemptRestart();
 			}
 		};
@@ -165,10 +167,14 @@ export class UsageWorkerController {
 				return;
 			}
 
-			if (this.state !== "ready") {
-				throw new Error(
-					`Cannot post message: worker state is "${this.state}", expected "ready"`,
+			// WR-02: shutting_down / stopped — drop silently rather than throw.
+			// The guard in the caller (safeHandleChunk) would swallow a throw anyway,
+			// but we make the contract clean: terminal states drop without raising.
+			if (this.state === "shutting_down" || this.state === "stopped") {
+				log.warn(
+					`Chunk dropped: worker is in "${this.state}" state, cannot dispatch`,
 				);
+				return;
 			}
 
 			const chunkBuf = (msg as ChunkMessage).data;
@@ -345,6 +351,10 @@ export class UsageWorkerController {
 			const blob = new Blob([workerCode], { type: "text/javascript" });
 			const workerUrl = URL.createObjectURL(blob);
 			w = new Worker(workerUrl, { smol: true });
+			// WR-03: revoke the object URL on next microtask so the Worker has time
+			// to load the script before the URL is revoked. Without this, every
+			// restart leaks a Blob + URL (max 4 leaks with MAX_RESTARTS=3).
+			Promise.resolve().then(() => URL.revokeObjectURL(workerUrl));
 		} else {
 			const workerPath = new URL("./post-processor.worker.ts", import.meta.url)
 				.href;

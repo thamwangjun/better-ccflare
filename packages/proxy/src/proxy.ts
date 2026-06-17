@@ -26,7 +26,6 @@ import {
 	validateProviderPath,
 } from "./handlers";
 import {
-	getUsageCollector,
 	initUsageCollector,
 	tryGetUsageCollector,
 	type UsageCollectorHealth,
@@ -386,36 +385,39 @@ export async function handleProxy(
 		const isAutoRefreshProbe =
 			req.headers.get("x-better-ccflare-auto-refresh") === "true";
 		if (!isAutoRefreshProbe) {
-			// Log to request history via usage collector (guarded — must not throw
-			// into the proxy hot path; any collector error is swallowed + logged).
+			// Log to request history via usage worker (guarded — must not throw
+			// into the proxy hot path; any worker error is swallowed + logged).
 			try {
-				getUsageCollector().handleStart({
-					type: "start",
-					messageId: crypto.randomUUID(),
-					requestId: requestMeta.id,
-					accountId: null,
-					method: req.method,
-					path: url.pathname,
-					timestamp: requestMeta.timestamp,
-					requestHeaders: Object.fromEntries(req.headers.entries()),
-					requestBody: null,
-					project: project ?? null,
-					responseStatus: 503,
-					responseHeaders: Object.fromEntries(
-						poolExhaustedResponse.headers.entries(),
-					),
-					isStream: false,
-					providerName: ctx.provider.name,
-					accountBillingType: null,
-					accountAutoPauseOnOverageEnabled: 0,
-					accountName: null,
-					agentUsed: agentUsed || null,
-					comboName: null,
-					apiKeyId: apiKeyId || null,
-					apiKeyName: apiKeyName || null,
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				});
+				const w = getUsageWorker();
+				if (w.isReady()) {
+					w.postMessage({
+						type: "start",
+						messageId: crypto.randomUUID(),
+						requestId: requestMeta.id,
+						accountId: null,
+						method: req.method,
+						path: url.pathname,
+						timestamp: requestMeta.timestamp,
+						requestHeaders: Object.fromEntries(req.headers.entries()),
+						requestBody: null,
+						project: project ?? null,
+						responseStatus: 503,
+						responseHeaders: Object.fromEntries(
+							poolExhaustedResponse.headers.entries(),
+						),
+						isStream: false,
+						providerName: ctx.provider.name,
+						accountBillingType: null,
+						accountAutoPauseOnOverageEnabled: 0,
+						accountName: null,
+						agentUsed: agentUsed || null,
+						comboName: null,
+						apiKeyId: apiKeyId || null,
+						apiKeyName: apiKeyName || null,
+						retryAttempt: 0,
+						failoverAttempts: 0,
+					});
+				}
 			} catch (err: unknown) {
 				log.warn(
 					`handleStart swallowed for pool_exhausted request ${requestMeta.id}:`,
@@ -424,19 +426,15 @@ export async function handleProxy(
 			}
 
 			try {
-				getUsageCollector()
-					.handleEnd({
+				const w = getUsageWorker();
+				if (w.isReady()) {
+					w.postMessage({
 						type: "end",
 						requestId: requestMeta.id,
 						success: false,
 						error: "pool_exhausted",
-					})
-					.catch((err: unknown) => {
-						log.error(
-							`handleEnd failed for pool_exhausted request ${requestMeta.id}`,
-							err,
-						);
 					});
+				}
 			} catch (err: unknown) {
 				log.warn(
 					`handleEnd swallowed for pool_exhausted request ${requestMeta.id}:`,

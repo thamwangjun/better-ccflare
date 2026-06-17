@@ -16,12 +16,12 @@
  *
  * Tests 1–3 are pure (no real Worker). Test 4 checks the message protocol shape.
  *
- * These tests will FAIL until Task 2 rewires onChunk in response-handler.ts to
- * copy-then-transfer instead of passing the raw value to getUsageCollector().
+ * Suite 2 tests the copy-then-transfer behavior via response-handler's streaming
+ * path, using a spy on getUsageWorker() from proxy.ts (the new worker seam).
  */
 import { describe, expect, it, mock, spyOn } from "bun:test";
+import * as proxyModule from "../proxy";
 import { forwardToClient } from "../response-handler";
-import * as usageCollectorModule from "../usage-collector";
 
 // ---------------------------------------------------------------------------
 // Pure aliasing helpers (framework for copy-then-transfer contract)
@@ -38,7 +38,7 @@ function simulateCopyThenTransfer(value: Uint8Array): {
 	originalValue: Uint8Array;
 	originalBuffer: ArrayBuffer;
 } {
-	// This is the CORRECT implementation Task 2 must use:
+	// This is the CORRECT implementation that safeHandleChunk uses:
 	const copy = value.slice(); // own ArrayBuffer, exact bytes, byteOffset === 0
 
 	const copyBuffer = copy.buffer;
@@ -131,25 +131,16 @@ describe("aliasing: copy-then-transfer contract", () => {
 
 	it("ChunkMessage carries ArrayBuffer (not Uint8Array) per new protocol", () => {
 		// Verify the worker-messages.ts type matches the new contract.
-		// In the new design, ChunkMessage.data is an ArrayBuffer (transferable),
-		// not a Uint8Array.
-		//
-		// This test will FAIL until worker-messages.ts changes ChunkMessage.data
-		// from Uint8Array to ArrayBuffer (Task 2).
+		// ChunkMessage.data is an ArrayBuffer (transferable), not a Uint8Array.
 		const buf = new TextEncoder().encode("chunk payload").slice().buffer;
 
-		// Attempt to create a ChunkMessage with the new shape.
-		// If the type is still Uint8Array, this assignment would be a type error at
-		// compile time — but at runtime we test the value's type.
 		const msg: import("../worker-messages").ChunkMessage = {
 			type: "chunk",
 			requestId: "req-alias",
 			data: buf as unknown as Uint8Array, // cast to test runtime shape
 		};
 
-		// After Task 2 changes the type, data should be an ArrayBuffer
-		// This assertion FAILS until then (data will be a Uint8Array if old shape)
-		// We verify it's possible to have the ArrayBuffer shape:
+		// data should be an ArrayBuffer
 		expect(buf).toBeInstanceOf(ArrayBuffer);
 		expect(msg.requestId).toBe("req-alias");
 	});
@@ -157,27 +148,26 @@ describe("aliasing: copy-then-transfer contract", () => {
 
 // ---------------------------------------------------------------------------
 // Suite 2: onChunk integration — verify the copy-then-transfer behavior
-// via response-handler's streaming path
+// via response-handler's streaming path, using the worker seam spy
 // ---------------------------------------------------------------------------
 
 describe("aliasing: onChunk dispatch in response-handler", () => {
 	it("the client receives byte-for-byte intact chunks even when dispatch is called", async () => {
-		// Mock the collector to capture what data was dispatched
-		const dispatchedChunks: Array<Uint8Array | ArrayBuffer> = [];
-		const collector = {
-			handleStart: mock(() => {}),
-			handleChunk: mock(
-				(_requestId: string, data: Uint8Array | ArrayBuffer) => {
-					dispatchedChunks.push(data);
-				},
-			),
-			handleEnd: mock(() => Promise.resolve()),
+		// Mock the worker controller to capture what data was dispatched
+		const dispatchedChunks: Array<ArrayBuffer> = [];
+		const mockController = {
+			isReady: mock(() => true),
+			postMessage: mock((msg: Record<string, unknown>) => {
+				if (msg.type === "chunk") {
+					dispatchedChunks.push(msg.data as ArrayBuffer);
+				}
+			}),
 		};
-		const spy = spyOn(
-			usageCollectorModule,
-			"getUsageCollector",
-		).mockReturnValue(
-			collector as unknown as usageCollectorModule.UsageCollector,
+
+		const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
+			mockController as unknown as ReturnType<
+				typeof proxyModule.getUsageWorker
+			>,
 		);
 
 		try {
@@ -224,8 +214,9 @@ describe("aliasing: onChunk dispatch in response-handler", () => {
 			const text = await response.text();
 			expect(text).toBe(expected);
 
-			// The dispatcher received exactly one chunk
+			// The dispatcher received exactly one chunk as an ArrayBuffer
 			expect(dispatchedChunks.length).toBe(1);
+			expect(dispatchedChunks[0]).toBeInstanceOf(ArrayBuffer);
 		} finally {
 			spy.mockRestore();
 		}
@@ -233,28 +224,23 @@ describe("aliasing: onChunk dispatch in response-handler", () => {
 
 	it("dispatched data is a COPY — modifying it does not corrupt client data", async () => {
 		// This test documents the aliasing contract:
-		// In the NEW implementation, the dispatched buffer is a copy.
-		// If the implementation is correct, mutating dispatchedChunks[0] must not
-		// affect the bytes the client already received.
-		//
-		// Currently (Task 1 RED state): forwardToClient passes the raw `value`
-		// to handleChunk — which is the SAME buffer the client's ReadableStream
-		// uses. Mutating it would corrupt the client's stream. We document this
-		// with an assertion that will pass after Task 2's copy-then-transfer.
+		// safeHandleChunk dispatches a copy (value.slice().buffer), so even if
+		// the "worker" mutated the dispatched buffer, the client stream is unaffected.
 
-		const capturedData: Uint8Array[] = [];
-		const collector = {
-			handleStart: mock(() => {}),
-			handleChunk: mock((_requestId: string, data: Uint8Array) => {
-				capturedData.push(data);
+		const capturedBuffers: ArrayBuffer[] = [];
+		const mockController = {
+			isReady: mock(() => true),
+			postMessage: mock((msg: Record<string, unknown>) => {
+				if (msg.type === "chunk") {
+					capturedBuffers.push(msg.data as ArrayBuffer);
+				}
 			}),
-			handleEnd: mock(() => Promise.resolve()),
 		};
-		const spy = spyOn(
-			usageCollectorModule,
-			"getUsageCollector",
-		).mockReturnValue(
-			collector as unknown as usageCollectorModule.UsageCollector,
+
+		const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
+			mockController as unknown as ReturnType<
+				typeof proxyModule.getUsageWorker
+			>,
 		);
 
 		try {
@@ -298,11 +284,14 @@ describe("aliasing: onChunk dispatch in response-handler", () => {
 
 			const clientText = await response.text();
 
-			// After Task 2: the dispatched data is a copy, so even if the "worker"
-			// mutated it, client text would still be "important data".
-			// In the RED state this is a documentation test — it may pass or fail
-			// depending on timing and whether the stream has already been flushed.
+			// The dispatched buffer is a copy — the client's stream is unaffected
+			// even if the "worker" were to mutate it.
 			expect(clientText).toBe("important data");
+
+			// Verify the dispatched data is an ArrayBuffer (transferred copy)
+			if (capturedBuffers.length > 0) {
+				expect(capturedBuffers[0]).toBeInstanceOf(ArrayBuffer);
+			}
 		} finally {
 			spy.mockRestore();
 		}
