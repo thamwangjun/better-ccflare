@@ -9,6 +9,21 @@ import type {
 
 const log = new Logger("UsageWorkerController");
 
+/**
+ * Compute the exponential backoff delay for a given exhaustion cycle count.
+ *
+ * Formula: min(30_000, 1_000 * 2^exhaustionCycles)
+ *
+ * Examples:
+ *   cycle 0 → 1000ms
+ *   cycle 1 → 2000ms
+ *   cycle 4 → 16000ms
+ *   cycle 5+ → 30000ms (capped)
+ */
+export function computeBackoffDelay(exhaustionCycles: number): number {
+	return Math.min(30_000, 1_000 * 2 ** exhaustionCycles);
+}
+
 type WorkerState = "starting" | "ready" | "shutting_down" | "stopped";
 
 export interface UsageWorkerHealth {
@@ -82,6 +97,8 @@ export class UsageWorkerController {
 	private lastError: string | null = null;
 	private startedAt: number | null = null;
 	private restartCount = 0;
+	private exhaustionCycles = 0;
+	private restartTimer: ReturnType<typeof setTimeout> | null = null;
 	private startupTimer: Timer | null = null;
 	private shutdownResolve: (() => void) | null = null;
 
@@ -209,6 +226,10 @@ export class UsageWorkerController {
 	}
 
 	terminate(): Promise<void> {
+		if (this.restartTimer !== null) {
+			clearTimeout(this.restartTimer);
+			this.restartTimer = null;
+		}
 		if (this.state === "stopped") return Promise.resolve();
 
 		this.state = "shutting_down";
@@ -248,6 +269,17 @@ export class UsageWorkerController {
 
 	isReady(): boolean {
 		return this.state === "ready";
+	}
+
+	/**
+	 * Returns true when the worker is in the "stopped" state.
+	 *
+	 * Used by the fallback routing in response-handler.ts to decide whether to
+	 * route usage data through the in-process UsageCollector instead of the
+	 * worker (which may be temporarily stopped between exhaustion and backoff restart).
+	 */
+	isStopped(): boolean {
+		return this.state === "stopped";
 	}
 
 	// ===== Internal =====
@@ -307,8 +339,17 @@ export class UsageWorkerController {
 		this.destroyWorker();
 
 		if (this.restartCount >= MAX_RESTARTS) {
-			log.error(`Worker failed after ${MAX_RESTARTS} restarts — giving up`);
+			this.restartCount = 0;
+			this.exhaustionCycles++;
+			const delay = computeBackoffDelay(this.exhaustionCycles - 1);
+			log.error(
+				`Worker exhausted ${MAX_RESTARTS} restarts — backing off ${delay}ms (exhaustion cycle ${this.exhaustionCycles})`,
+			);
 			this.state = "stopped";
+			this.restartTimer = setTimeout(() => {
+				this.restartTimer = null;
+				if (this.state === "stopped") this.start();
+			}, delay);
 			return;
 		}
 
