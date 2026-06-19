@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-02 after v1.2 milestone completion)
 Phase: 11
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-06-04
+Last activity: 2026-06-19 - Completed quick task 260619-l4e: Merge upstream tag v3.5.27 into thamw-main
 
 ## Performance Metrics
 
@@ -94,6 +94,7 @@ None.
 | 260602-8l6 | Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies | 2026-06-02 | 47703b18 | [260602-8l6-refactor-cost-02-cost-03-tests-to-exerci](./quick/260602-8l6-refactor-cost-02-cost-03-tests-to-exerci/) |
 | 260602-eax | Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause | 2026-06-02 | d3a7ac77 | [260602-eax-fix-saverequest-cost-usd-unconditional-o](./quick/260602-eax-fix-saverequest-cost-usd-unconditional-o/) |
 | 260613-mrg | Resolve upstream/main merge — keep fork CLAUDE.md; port providerCostUsd into usage-collector after upstream deleted the worker | 2026-06-13 | be598d89 | [260613-mrg-merge-upstream-main-resolve-confli](./quick/260613-mrg-merge-upstream-main-resolve-confli/) |
+| 260619-l4e | Merge upstream tag v3.5.27 into thamw-main (Opus 4.8 + Fable 5, integrity fixes, PG fixes); resolve CLAUDE.md keeping fork | 2026-06-19 | b40180bf | [260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma](./quick/260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma/) |
 
 ## Session Continuity
 
