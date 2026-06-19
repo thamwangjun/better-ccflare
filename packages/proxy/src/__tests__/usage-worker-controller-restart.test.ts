@@ -11,10 +11,10 @@
  * Test 3: computeBackoffDelay formula boundary values (pure function, no timers)
  * Test 4: terminate() during backoff cancels the pending restart
  */
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import { afterEach, describe, expect, it, mock } from "bun:test";
 import {
-	UsageWorkerController,
 	computeBackoffDelay,
+	UsageWorkerController,
 } from "../usage-worker-controller";
 
 // ---------------------------------------------------------------------------
@@ -86,7 +86,14 @@ function makeFailingController(opts?: {
 		globalThis.Worker = OrigWorker;
 	}
 
-	return { controller, summaryCallback, readyCallback, mockWorkers, restore, getWorkerCreateCount: () => workerCreateCount };
+	return {
+		controller,
+		summaryCallback,
+		readyCallback,
+		mockWorkers,
+		restore,
+		getWorkerCreateCount: () => workerCreateCount,
+	};
 }
 
 async function sleep(ms: number): Promise<void> {

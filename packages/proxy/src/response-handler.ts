@@ -10,9 +10,25 @@ import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
 import { getUsageWorker } from "./proxy";
 import { combineChunks, teeStream } from "./stream-tee";
+import { tryGetUsageCollector } from "./usage-collector";
 import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 
 const log = new Logger("ResponseHandler");
+
+/**
+ * Tracks requestIds that were routed to the in-process UsageCollector fallback
+ * (because the worker was stopped when the request started). Used to keep the
+ * entire Start→Chunk→End lifecycle on the same path.
+ */
+const collectorRequestIds = new Set<string>();
+
+/**
+ * Clear the collectorRequestIds tracking Set.
+ * For testing only — ensures no state leaks between test cases.
+ */
+export function resetForTesting(): void {
+	collectorRequestIds.clear();
+}
 
 /**
  * Safety guard for usage-accounting dispatch.
@@ -30,7 +46,14 @@ function safeHandleStart(msg: StartMessage): void {
 		const w = getUsageWorker();
 		if (w.isReady()) {
 			w.postMessage(msg);
+		} else if (w.isStopped()) {
+			// Worker is stopped (mid-backoff after MAX_RESTARTS exhaustion).
+			// Route to in-process UsageCollector so data is not silently lost.
+			collectorRequestIds.add(msg.requestId);
+			tryGetUsageCollector()?.handleStart(msg);
 		}
+		// Worker is still starting: chunks will buffer in the worker controller's
+		// ready-buffer; we skip the start message here (consistent with prior behaviour).
 	} catch (err: unknown) {
 		log.warn(`handleStart swallowed for request ${msg.requestId}:`, err);
 	}
@@ -53,13 +76,32 @@ function safeHandleChunk(requestId: string, value: Uint8Array): void {
 		// exact bytes). We transfer the copy's buffer to the worker; the original
 		// Uint8Array is untouched and the client stream is unaffected.
 		const copy = value.slice();
+
+		// If this request started on the collector path (worker was stopped at Start
+		// time), route all its chunks to the collector for consistent accounting.
+		if (collectorRequestIds.has(requestId)) {
+			tryGetUsageCollector()?.handleChunk(requestId, copy);
+			return;
+		}
+
 		const msg: ChunkMessage = {
 			type: "chunk",
 			requestId,
 			data: copy.buffer,
 		};
+
+		// If the worker has become stopped mid-request (after the Start was
+		// dispatched to the worker), log a data-loss warning — we cannot retroactively
+		// re-route without losing the already-counted start event.
+		const w = getUsageWorker();
+		if (w.isStopped()) {
+			log.warn(
+				`safeHandleChunk: data loss for requestId=${requestId} — worker stopped mid-request`,
+			);
+		}
+
 		// Controller handles "starting" (buffers), "shutting_down"/"stopped" (drops silently).
-		getUsageWorker().postMessage(msg);
+		w.postMessage(msg);
 	} catch (err: unknown) {
 		log.warn(`handleChunk swallowed for request ${requestId}:`, err);
 	}
@@ -67,6 +109,21 @@ function safeHandleChunk(requestId: string, value: Uint8Array): void {
 
 function fireAndForgetEnd(msg: EndMessage): void {
 	try {
+		// If this request was routed to the in-process collector at Start time,
+		// complete its lifecycle there and remove from tracking Set.
+		if (collectorRequestIds.has(msg.requestId)) {
+			collectorRequestIds.delete(msg.requestId);
+			tryGetUsageCollector()
+				?.handleEnd(msg)
+				.catch((err: unknown) => {
+					log.error(
+						`handleEnd (collector) failed for request ${msg.requestId}`,
+						err,
+					);
+				});
+			return;
+		}
+
 		const w = getUsageWorker();
 		if (w.isReady()) {
 			w.postMessage(msg);

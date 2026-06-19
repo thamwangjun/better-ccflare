@@ -157,6 +157,7 @@ describe("aliasing: onChunk dispatch in response-handler", () => {
 		const dispatchedChunks: Array<ArrayBuffer> = [];
 		const mockController = {
 			isReady: mock(() => true),
+			isStopped: mock(() => false),
 			postMessage: mock((msg: Record<string, unknown>) => {
 				if (msg.type === "chunk") {
 					dispatchedChunks.push(msg.data as ArrayBuffer);
@@ -230,6 +231,7 @@ describe("aliasing: onChunk dispatch in response-handler", () => {
 		const capturedBuffers: ArrayBuffer[] = [];
 		const mockController = {
 			isReady: mock(() => true),
+			isStopped: mock(() => false),
 			postMessage: mock((msg: Record<string, unknown>) => {
 				if (msg.type === "chunk") {
 					capturedBuffers.push(msg.data as ArrayBuffer);
