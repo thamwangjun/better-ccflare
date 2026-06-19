@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-06-02 after v1.2 milestone completion)
 Phase: 11
 Plan: Not started
 Status: Milestone complete
-Last activity: 2026-06-19 - Completed quick task 260619-l4e: Merge upstream tag v3.5.27 into thamw-main
+Last activity: 2026-06-20 - Completed quick task 260620-29c: Fix: usage data loss when post-processor worker enters stopped state
 
 ## Performance Metrics
 
@@ -86,16 +86,17 @@ None.
 
 ### Quick Tasks Completed
 
-| # | Description | Date | Commit | Directory |
-|---|-------------|------|--------|-----------|
-| 260531-l6i | Trim CLAUDE.md, keep important parts, remove redundant parts | 2026-05-31 | 58324d3f | [260531-l6i-trim-claude-md-keep-important-parts-remo](./quick/260531-l6i-trim-claude-md-keep-important-parts-remo/) |
-| 260601-lvx | Replace inline-copy test functions with imports of real production functions | 2026-06-01 | f5ab21cb | [260601-lvx-replace-inline-copy-test-functions-with-](./quick/260601-lvx-replace-inline-copy-test-functions-with-/) |
-| 260601-m3c | Implement parseUsage on OpenRouterProvider for streaming cost extraction | 2026-06-01 | 49002d48 | [260601-m3c-implement-parseusage-on-openrouterprovid](./quick/260601-m3c-implement-parseusage-on-openrouterprovid/) |
-| 260602-8l6 | Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies | 2026-06-02 | 47703b18 | [260602-8l6-refactor-cost-02-cost-03-tests-to-exerci](./quick/260602-8l6-refactor-cost-02-cost-03-tests-to-exerci/) |
-| 260602-eax | Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause | 2026-06-02 | d3a7ac77 | [260602-eax-fix-saverequest-cost-usd-unconditional-o](./quick/260602-eax-fix-saverequest-cost-usd-unconditional-o/) |
-| 260613-mrg | Resolve upstream/main merge — keep fork CLAUDE.md; port providerCostUsd into usage-collector after upstream deleted the worker | 2026-06-13 | be598d89 | [260613-mrg-merge-upstream-main-resolve-confli](./quick/260613-mrg-merge-upstream-main-resolve-confli/) |
-| 260617-3fb | Restore async Worker-offloaded usage collector with transferable ArrayBuffers + safe dispatch guard (#244); wire Worker into hot path + server lifecycle | 2026-06-17 | 5cd0e604 | [260617-3fb-restore-async-worker-offloaded-usage-col](./quick/260617-3fb-restore-async-worker-offloaded-usage-col/) |
-| 260619-l4e | Merge upstream tag v3.5.27 into thamw-main (Opus 4.8 + Fable 5, integrity fixes, PG fixes); resolve CLAUDE.md keeping fork | 2026-06-19 | b40180bf | [260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma](./quick/260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma/) |
+| # | Description | Date | Commit | Status | Directory |
+|---|-------------|------|--------|--------|-----------|
+| 260531-l6i | Trim CLAUDE.md, keep important parts, remove redundant parts | 2026-05-31 | 58324d3f | | [260531-l6i-trim-claude-md-keep-important-parts-remo](./quick/260531-l6i-trim-claude-md-keep-important-parts-remo/) |
+| 260601-lvx | Replace inline-copy test functions with imports of real production functions | 2026-06-01 | f5ab21cb | | [260601-lvx-replace-inline-copy-test-functions-with-](./quick/260601-lvx-replace-inline-copy-test-functions-with-/) |
+| 260601-m3c | Implement parseUsage on OpenRouterProvider for streaming cost extraction | 2026-06-01 | 49002d48 | | [260601-m3c-implement-parseusage-on-openrouterprovid](./quick/260601-m3c-implement-parseusage-on-openrouterprovid/) |
+| 260602-8l6 | Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies | 2026-06-02 | 47703b18 | | [260602-8l6-refactor-cost-02-cost-03-tests-to-exerci](./quick/260602-8l6-refactor-cost-02-cost-03-tests-to-exerci/) |
+| 260602-eax | Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause | 2026-06-02 | d3a7ac77 | | [260602-eax-fix-saverequest-cost-usd-unconditional-o](./quick/260602-eax-fix-saverequest-cost-usd-unconditional-o/) |
+| 260613-mrg | Resolve upstream/main merge — keep fork CLAUDE.md; port providerCostUsd into usage-collector after upstream deleted the worker | 2026-06-13 | be598d89 | | [260613-mrg-merge-upstream-main-resolve-confli](./quick/260613-mrg-merge-upstream-main-resolve-confli/) |
+| 260617-3fb | Restore async Worker-offloaded usage collector with transferable ArrayBuffers + safe dispatch guard (#244); wire Worker into hot path + server lifecycle | 2026-06-17 | 5cd0e604 | | [260617-3fb-restore-async-worker-offloaded-usage-col](./quick/260617-3fb-restore-async-worker-offloaded-usage-col/) |
+| 260619-l4e | Merge upstream tag v3.5.27 into thamw-main (Opus 4.8 + Fable 5, integrity fixes, PG fixes); resolve CLAUDE.md keeping fork | 2026-06-19 | b40180bf | | [260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma](./quick/260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma/) |
+| 260620-29c | Fix: usage data loss when post-processor worker enters stopped state | 2026-06-20 | f2621e25 | Verified | [260620-29c-fix-usage-data-loss-when-post-processor-](./quick/260620-29c-fix-usage-data-loss-when-post-processor-/) |
 
 ## Session Continuity
 
