@@ -62,7 +62,8 @@ function makeDb(): { db: Database; repo: AccountRepository } {
 			openrouter_provider_preference TEXT,
 			rate_limited_reason TEXT,
 			rate_limited_at INTEGER,
-			peak_hours_pause_enabled INTEGER DEFAULT 0
+			peak_hours_pause_enabled INTEGER DEFAULT 0,
+			consecutive_rate_limits INTEGER NOT NULL DEFAULT 0
 		)
 	`);
 

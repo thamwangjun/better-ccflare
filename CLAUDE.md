@@ -32,7 +32,7 @@ New tables go in BOTH `ensureSchemaPg()` and `runMigrationsPg()` (use `CREATE TA
 
 ## Pre-PR Review with Greptile
 
-Before opening a pull request, run a Greptile review from the terminal:
+Before opening a pull request, run a Greptile review. Prefer dispatching the `greptile-reviewer` agent (`.claude/agents/greptile-reviewer.md`, runs on haiku) rather than running `greptile review` in the main session — Greptile quotes code blocks and inflates context; the agent returns a compact `file:line` + one-line findings list. Fallback if the agent is unavailable:
 
 ```bash
 greptile review
@@ -103,6 +103,10 @@ OS timezone is UTC+2. Log/`/tmp` timestamps are UTC — add 2 hours for local.
 ## Qwen Provider
 - Always mirror the qwen-code implementation at `/home/tom/git_repos/qwen-code/` — check it before implementing.
 - Qwen/DashScope sends incremental (not cumulative) tool-call argument chunks. The streaming transform buffers all chunks and emits complete JSON at stream end, matching `StreamingToolCallParser` in qwen-code.
+
+## ⚠️ GitNexus Token Discipline: route ALL GitNexus calls through the `gitnexus-analyst` subagent
+
+GitNexus MCP results are large and persist in the main context. Never call GitNexus MCP tools (`impact`, `context`, `query`, `detect_changes`, `cypher`, `rename`, etc.) directly in the main session. Wherever the section below says to run a GitNexus tool, dispatch the `gitnexus-analyst` agent (`.claude/agents/gitnexus-analyst.md`, runs on haiku) instead; it returns a ~30-line summary and keeps raw payloads in its throwaway context. Fallback only if the subagent is unavailable: call inline with minimized payloads — `impact({summaryOnly: true})`, `query({limit: 3, max_symbols: 5})`. This OVERRIDES the auto-generated section below (do not edit inside the `gitnexus:start`/`gitnexus:end` markers).
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
