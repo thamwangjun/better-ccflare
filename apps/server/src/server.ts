@@ -43,8 +43,7 @@ import {
 import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
-	drainUsageCollector,
-	getUsageCollectorHealth,
+	getUsageWorkerHealth,
 	getValidAccessToken,
 	handleProxy,
 	initProxy,
@@ -52,9 +51,12 @@ import {
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
+	sendWorkerConfigUpdate,
 	startGlobalTokenHealthChecks,
 	startIntegrityScheduler,
+	startUsageWorker,
 	stopGlobalTokenHealthChecks,
+	terminateUsageWorker,
 	unregisterCodexUsageRefresher,
 } from "@better-ccflare/proxy";
 import { validatePathOrThrow } from "@better-ccflare/security";
@@ -684,7 +686,7 @@ export default async function startServer(options?: {
 			tlsEnabled,
 		},
 		getAsyncWriterHealth: () => asyncWriter.getHealth(),
-		getUsageWorkerHealth: () => getUsageCollectorHealth(),
+		getUsageWorkerHealth: () => getUsageWorkerHealth(),
 		getIntegrityStatus: () => dbOps.getIntegrityStatus(),
 		getStrategy: () => currentStrategy,
 	});
@@ -857,6 +859,8 @@ export default async function startServer(options?: {
 	currentStrategy = strategy;
 
 	initProxy(() => config.getStorePayloads());
+	startUsageWorker();
+	sendWorkerConfigUpdate(config.getStorePayloads());
 
 	// Proxy context
 	const proxyContext: ProxyContext = {
@@ -1046,7 +1050,9 @@ export default async function startServer(options?: {
 			proxyContext.strategy = strategy;
 			currentStrategy = strategy;
 		}
-		// store_payloads changes are picked up automatically via the getStorePayloads getter
+		if (key === "store_payloads") {
+			sendWorkerConfigUpdate(config.getStorePayloads());
+		}
 	});
 
 	// Main server
@@ -1644,7 +1650,7 @@ async function handleGracefulShutdown(signal: string) {
 		}
 
 		usageCache.clear(); // Stop all usage polling
-		await drainUsageCollector();
+		await terminateUsageWorker();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);

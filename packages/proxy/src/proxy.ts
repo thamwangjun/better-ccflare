@@ -26,11 +26,12 @@ import {
 	validateProviderPath,
 } from "./handlers";
 import {
-	getUsageCollector,
 	initUsageCollector,
 	tryGetUsageCollector,
 	type UsageCollectorHealth,
 } from "./usage-collector";
+import { UsageWorkerController } from "./usage-worker-controller";
+import type { ConfigUpdateMessage, SummaryMessage } from "./worker-messages";
 
 export type { ProxyContext } from "./handlers";
 
@@ -114,6 +115,67 @@ export async function drainUsageCollector(): Promise<void> {
 
 export function getUsageCollectorHealth(): UsageCollectorHealth {
 	return tryGetUsageCollector()?.getHealth() ?? { state: "ready" };
+}
+
+// ===== WORKER MANAGEMENT =====
+// Worker-based async usage accounting (restored from 315440fa^).
+// The controller is a module-level singleton started eagerly by server.ts.
+
+let pendingStorePayloads: boolean | null = null;
+
+const usageWorkerController = new UsageWorkerController(
+	(msg: SummaryMessage) => {
+		cacheBodyStore.onSummary(
+			msg.summary.id,
+			msg.summary.cacheCreationInputTokens,
+		);
+		requestEvents.emit("event", { type: "summary", payload: msg.summary });
+	},
+	() => {
+		// Apply deferred config update once worker is ready
+		if (pendingStorePayloads !== null) {
+			const cfgMsg: ConfigUpdateMessage = {
+				type: "config-update",
+				storePayloads: pendingStorePayloads,
+			};
+			try {
+				usageWorkerController.postMessage(cfgMsg);
+			} catch (err) {
+				log.warn("Failed to send deferred ConfigUpdate to worker:", err);
+			}
+			pendingStorePayloads = null;
+		}
+	},
+);
+
+export function getUsageWorker(): UsageWorkerController {
+	return usageWorkerController;
+}
+
+export function startUsageWorker(): void {
+	usageWorkerController.start();
+}
+
+export function sendWorkerConfigUpdate(storePayloads: boolean): void {
+	if (!usageWorkerController.isReady()) {
+		// Defer until worker is ready
+		pendingStorePayloads = storePayloads;
+		return;
+	}
+	const msg: ConfigUpdateMessage = { type: "config-update", storePayloads };
+	try {
+		usageWorkerController.postMessage(msg);
+	} catch (err) {
+		log.warn("Failed to send ConfigUpdate to worker:", err);
+	}
+}
+
+export function terminateUsageWorker(): Promise<void> {
+	return usageWorkerController.terminate();
+}
+
+export function getUsageWorkerHealth() {
+	return usageWorkerController.getHealth();
 }
 
 // ===== MAIN HANDLER =====
@@ -323,48 +385,62 @@ export async function handleProxy(
 		const isAutoRefreshProbe =
 			req.headers.get("x-better-ccflare-auto-refresh") === "true";
 		if (!isAutoRefreshProbe) {
-			// Log to request history via usage collector
-			getUsageCollector().handleStart({
-				type: "start",
-				messageId: crypto.randomUUID(),
-				requestId: requestMeta.id,
-				accountId: null,
-				method: req.method,
-				path: url.pathname,
-				timestamp: requestMeta.timestamp,
-				requestHeaders: Object.fromEntries(req.headers.entries()),
-				requestBody: null,
-				project: project ?? null,
-				responseStatus: 503,
-				responseHeaders: Object.fromEntries(
-					poolExhaustedResponse.headers.entries(),
-				),
-				isStream: false,
-				providerName: ctx.provider.name,
-				accountBillingType: null,
-				accountAutoPauseOnOverageEnabled: 0,
-				accountName: null,
-				agentUsed: agentUsed || null,
-				comboName: null,
-				apiKeyId: apiKeyId || null,
-				apiKeyName: apiKeyName || null,
-				retryAttempt: 0,
-				failoverAttempts: 0,
-			});
+			// Log to request history via usage worker (guarded — must not throw
+			// into the proxy hot path; any worker error is swallowed + logged).
+			try {
+				const w = getUsageWorker();
+				if (w.isReady()) {
+					w.postMessage({
+						type: "start",
+						messageId: crypto.randomUUID(),
+						requestId: requestMeta.id,
+						accountId: null,
+						method: req.method,
+						path: url.pathname,
+						timestamp: requestMeta.timestamp,
+						requestHeaders: Object.fromEntries(req.headers.entries()),
+						requestBody: null,
+						project: project ?? null,
+						responseStatus: 503,
+						responseHeaders: Object.fromEntries(
+							poolExhaustedResponse.headers.entries(),
+						),
+						isStream: false,
+						providerName: ctx.provider.name,
+						accountBillingType: null,
+						accountAutoPauseOnOverageEnabled: 0,
+						accountName: null,
+						agentUsed: agentUsed || null,
+						comboName: null,
+						apiKeyId: apiKeyId || null,
+						apiKeyName: apiKeyName || null,
+						retryAttempt: 0,
+						failoverAttempts: 0,
+					});
+				}
+			} catch (err: unknown) {
+				log.warn(
+					`handleStart swallowed for pool_exhausted request ${requestMeta.id}:`,
+					err,
+				);
+			}
 
-			getUsageCollector()
-				.handleEnd({
-					type: "end",
-					requestId: requestMeta.id,
-					success: false,
-					error: "pool_exhausted",
-				})
-				.catch((err: unknown) => {
-					log.error(
-						`handleEnd failed for pool_exhausted request ${requestMeta.id}`,
-						err,
-					);
-				});
+			try {
+				const w = getUsageWorker();
+				if (w.isReady()) {
+					w.postMessage({
+						type: "end",
+						requestId: requestMeta.id,
+						success: false,
+						error: "pool_exhausted",
+					});
+				}
+			} catch (err: unknown) {
+				log.warn(
+					`handleEnd swallowed for pool_exhausted request ${requestMeta.id}:`,
+					err,
+				);
+			}
 		}
 
 		return poolExhaustedResponse;

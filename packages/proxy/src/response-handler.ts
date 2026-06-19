@@ -8,18 +8,72 @@ import type { Account, RateLimitReason } from "@better-ccflare/types";
 import type { ProxyContext } from "./handlers";
 import { applyRateLimitCooldown } from "./handlers/rate-limit-cooldown";
 import { createSseRateLimitSniffer } from "./handlers/sse-rate-limit-sniffer";
+import { getUsageWorker } from "./proxy";
 import { combineChunks, teeStream } from "./stream-tee";
-import { getUsageCollector } from "./usage-collector";
-import type { EndMessage, StartMessage } from "./worker-messages";
+import type { ChunkMessage, EndMessage, StartMessage } from "./worker-messages";
 
 const log = new Logger("ResponseHandler");
 
+/**
+ * Safety guard for usage-accounting dispatch.
+ *
+ * A throw in postMessage must NEVER reach teeStream's pull() catch
+ * (stream-tee.ts:57-60), which calls controller.error(error) and discards the
+ * already-enqueued client chunk. This guard logs + swallows so a usage-accounting
+ * failure is invisible to the client stream. (#244 / #245 regression fix)
+ *
+ * StartMessages are only posted when the worker is ready — if not yet ready they
+ * are silently dropped (the worker will buffer Chunks during startup).
+ */
+function safeHandleStart(msg: StartMessage): void {
+	try {
+		const w = getUsageWorker();
+		if (w.isReady()) {
+			w.postMessage(msg);
+		}
+	} catch (err: unknown) {
+		log.warn(`handleStart swallowed for request ${msg.requestId}:`, err);
+	}
+}
+
+/**
+ * Copy-then-dispatch guard for chunk data.
+ *
+ * 1. Makes a standalone copy of the chunk via value.slice() so the client's
+ *    enqueued buffer is never detached (aliasing rule from CONTEXT.md).
+ *    The copy's ArrayBuffer is transferred zero-copy to the worker via the
+ *    controller's transfer list ([copy.buffer]). (#244 off-heap leak fix)
+ * 2. Wraps the dispatch in try/catch so a worker error cannot propagate to
+ *    teeStream's pull() catch and abort the client stream. (#245 regression fix)
+ */
+function safeHandleChunk(requestId: string, value: Uint8Array): void {
+	try {
+		// value is already enqueued to the client by teeStream (stream-tee.ts:39).
+		// slice() produces a fresh Uint8Array with its own ArrayBuffer (byteOffset=0,
+		// exact bytes). We transfer the copy's buffer to the worker; the original
+		// Uint8Array is untouched and the client stream is unaffected.
+		const copy = value.slice();
+		const msg: ChunkMessage = {
+			type: "chunk",
+			requestId,
+			data: copy.buffer,
+		};
+		// Controller handles "starting" (buffers), "shutting_down"/"stopped" (drops silently).
+		getUsageWorker().postMessage(msg);
+	} catch (err: unknown) {
+		log.warn(`handleChunk swallowed for request ${requestId}:`, err);
+	}
+}
+
 function fireAndForgetEnd(msg: EndMessage): void {
-	getUsageCollector()
-		.handleEnd(msg)
-		.catch((err: unknown) => {
-			log.error(`handleEnd failed for request ${msg.requestId}`, err);
-		});
+	try {
+		const w = getUsageWorker();
+		if (w.isReady()) {
+			w.postMessage(msg);
+		}
+	} catch (err: unknown) {
+		log.error(`handleEnd failed for request ${msg.requestId}`, err);
+	}
 }
 
 // Default cooldown for rate-limit errors detected mid-stream. SSE error
@@ -77,9 +131,8 @@ export interface ResponseHandlerOptions {
 
 /**
  * Unified response handler that immediately streams responses
- * while forwarding data to worker for async processing
+ * while forwarding data to the usage worker for async off-thread processing.
  */
-// Forward response to client while streaming analytics to worker
 export async function forwardToClient(
 	options: ResponseHandlerOptions,
 	ctx: ProxyContext,
@@ -166,7 +219,7 @@ export async function forwardToClient(
 			retryAttempt,
 			failoverAttempts,
 		};
-		getUsageCollector().handleStart(startMessage);
+		safeHandleStart(startMessage);
 	}
 
 	// Emit request start event for real-time dashboard
@@ -196,7 +249,7 @@ export async function forwardToClient(
 
 		const onChunk = (value: Uint8Array): void => {
 			if (shouldProcessRequest) {
-				getUsageCollector().handleChunk(requestId, value);
+				safeHandleChunk(requestId, value);
 			}
 
 			// Mid-stream rate-limit detection. The sniffer
