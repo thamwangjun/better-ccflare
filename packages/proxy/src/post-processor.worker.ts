@@ -69,6 +69,7 @@ import type {
 	SummaryMessage,
 	WorkerMessage,
 } from "./worker-messages";
+import { isModelRewrite } from "./worker-messages";
 
 const log = new Logger("PostProcessor");
 
@@ -509,6 +510,13 @@ async function handleEndInternal(msg: EndMessage): Promise<void> {
 	}
 
 	const projectAtEnd = state.project ?? null;
+	const modelRewritten = isModelRewrite(
+		startMessage.originalModel,
+		startMessage.appliedModel,
+	);
+	// Only persist when an actual rewrite occurred — leaves both
+	// columns null for the (overwhelmingly common) unchanged case
+	// instead of duplicating the `model` column's value.
 	asyncWriter.enqueue(async () => {
 		try {
 			await dbOps.saveRequest(
@@ -544,6 +552,8 @@ async function handleEndInternal(msg: EndMessage): Promise<void> {
 				projectAtEnd,
 				state.billingType,
 				startMessage.comboName || null,
+				modelRewritten ? startMessage.originalModel : null,
+				modelRewritten ? startMessage.appliedModel : null,
 			);
 		} catch (error) {
 			log.error(`Failed to save request for ${startMessage.requestId}:`, error);
@@ -662,6 +672,8 @@ async function handleEndInternal(msg: EndMessage): Promise<void> {
 		apiKeyName: startMessage.apiKeyName || undefined,
 		project: state.project ?? undefined,
 		billingType: state.billingType,
+		originalModel: startMessage.originalModel || undefined,
+		appliedModel: startMessage.appliedModel || undefined,
 		comboName: startMessage.comboName || undefined,
 	};
 
