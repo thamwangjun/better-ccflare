@@ -213,7 +213,7 @@ The `oauth_sessions` table stores temporary OAuth PKCE (Proof Key for Code Excha
 
 ### agent_preferences Table
 
-The `agent_preferences` table stores user-defined model preferences for specific agents.
+The `agent_preferences` table stores user-defined model preferences for specific agents. This is a runtime-only override — it never modifies the agent's `.md` file — and a row is deleted automatically whenever a default model is saved for that agent via `PATCH /api/agents/:id`.
 
 | Column | Type | Constraints | Description |
 |--------|------|-------------|-------------|
@@ -360,6 +360,23 @@ The full schema is created automatically on first startup (`CREATE TABLE IF NOT 
 - Kubernetes deployments with multiple replicas (pods cannot share a SQLite file)
 - Environments where you already operate a PostgreSQL cluster
 - High-write-concurrency scenarios benefiting from PostgreSQL connection pooling
+
+#### PostgreSQL Connection Tuning
+
+These environment variables only apply when `DATABASE_URL` points to PostgreSQL:
+
+| Variable | Default | Description |
+|----------|---------|--------------|
+| `BETTER_CCFLARE_DB_POOL_MAX` | `10` | Maximum number of pooled connections |
+| `BETTER_CCFLARE_DB_IDLE_TIMEOUT` | `0` (disabled) | Seconds before an idle pooled connection is closed |
+| `BETTER_CCFLARE_DB_STATEMENT_TIMEOUT` | `7000` | Server-side `statement_timeout` in milliseconds. Clamped to stay below the client-side query timeout (8000ms) so PostgreSQL cancels and frees the connection before the client gives up; invalid or out-of-range values fall back to the default |
+| `BETTER_CCFLARE_DB_PG_PREPARE` | `false` | Set to `true` to enable named prepared statement caching. Left disabled by default to avoid a known class of bugs in Bun's native PostgreSQL driver ([oven-sh/bun#16774](https://github.com/oven-sh/bun/issues/16774)) where concurrent queries sharing a pooled connection can corrupt binary integer decoding under load |
+
+```bash
+export BETTER_CCFLARE_DB_POOL_MAX=20
+export BETTER_CCFLARE_DB_IDLE_TIMEOUT=30
+export BETTER_CCFLARE_DB_STATEMENT_TIMEOUT=5000
+```
 
 ### Runtime Configuration
 

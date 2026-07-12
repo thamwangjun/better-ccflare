@@ -3,6 +3,7 @@ import {
 	ServiceUnavailableError,
 	trackClientVersion,
 } from "@better-ccflare/core";
+import { DatabaseFactory } from "@better-ccflare/database";
 import { Logger } from "@better-ccflare/logger";
 import { usageCache } from "@better-ccflare/providers";
 import type { Account } from "@better-ccflare/types";
@@ -22,6 +23,7 @@ import {
 	proxyWithAccount,
 	RequestBodyContext,
 	type RequestJsonBody,
+	resolveEffectiveModel,
 	selectAccountsForRequest,
 	validateProviderPath,
 } from "./handlers";
@@ -103,10 +105,16 @@ function extractProjectFromRequest(
 
 // ===== USAGE COLLECTOR MANAGEMENT =====
 
-export function initProxy(getStorePayloads: () => boolean): void {
-	initUsageCollector(getStorePayloads, (summary) => {
-		requestEvents.emit("event", { type: "summary", payload: summary });
-	});
+export async function initProxy(
+	getStorePayloads: () => boolean,
+): Promise<void> {
+	await initUsageCollector(
+		getStorePayloads,
+		(summary) => {
+			requestEvents.emit("event", { type: "summary", payload: summary });
+		},
+		DatabaseFactory.getInstance(),
+	);
 }
 
 export async function drainUsageCollector(): Promise<void> {
@@ -277,7 +285,14 @@ export async function handleProxy(
 
 	// 4. Intercept and modify request for agent model preferences
 	const { modifiedBody, agentUsed, originalModel, appliedModel } =
-		await interceptAndModifyRequest(requestBodyContext, ctx.dbOps);
+		await interceptAndModifyRequest(
+			requestBodyContext,
+			ctx.dbOps,
+			req.headers,
+			{
+				frontmatterModelFallback: ctx.config.getAgentFrontmatterModelFallback(),
+			},
+		);
 
 	// Use modified body if available
 	const finalBodyBuffer = modifiedBody || requestBodyContext.getBuffer();
@@ -296,12 +311,19 @@ export async function handleProxy(
 	const requestMeta = createRequestMetadata(req, url);
 	requestMeta.agentUsed = agentUsed;
 	requestMeta.project = project;
+	requestMeta.clientSessionId = requestBodyContext.getClientId();
+	requestMeta.originalModel = originalModel;
+	requestMeta.appliedModel = appliedModel;
 
-	// 6. Select accounts
+	// 6. Select accounts. Route on the model that will actually be sent
+	// upstream (post-interceptor-rewrite), not the model the client asked
+	// for — otherwise combo routing and family-based selection see a model
+	// that no longer matches the outgoing request.
+	const effectiveModel = resolveEffectiveModel(appliedModel, requestModel);
 	const selectedAccounts = await selectAccountsForRequest(
 		requestMeta,
 		ctx,
-		requestModel ?? undefined,
+		effectiveModel ?? undefined,
 	);
 
 	const applyUsageThrottling = (accounts: Account[]) => {
@@ -317,11 +339,26 @@ export async function handleProxy(
 		const available: Account[] = [];
 		const throttled: Account[] = [];
 
+		// Model-aware throttling: a per-model weekly cap should only throttle
+		// requests for that model. Use the effective (post-intercept) request
+		// model; combo-routed requests assign per-slot models later, so skip
+		// scoped caps (null) and rely on the flat windows + reactive out_of_credits.
+		// combo routing sets meta.comboName during selection and CLEARS it on the
+		// step-10 fallback; use it (not the stale comboSlotInfo WeakMap, which the
+		// fallback does not clear) so fallback routing still applies per-model scoped
+		// throttling for its now-known single model.
+		const comboRouted = requestMeta.comboName != null;
+		const effectiveModel = appliedModel ?? requestModel ?? null;
+
 		for (const account of accounts) {
 			const throttleUntil = getUsageThrottleUntil(
 				usageCache.get(account.id),
 				settings,
 				now,
+				{
+					requestModel: comboRouted ? null : effectiveModel,
+					scopedMode: "match",
+				},
 			);
 			if (throttleUntil && throttleUntil > now) {
 				throttled.push(account);
@@ -411,6 +448,8 @@ export async function handleProxy(
 						accountAutoPauseOnOverageEnabled: 0,
 						accountName: null,
 						agentUsed: agentUsed || null,
+						originalModel: originalModel || null,
+						appliedModel: appliedModel || null,
 						comboName: null,
 						apiKeyId: apiKeyId || null,
 						apiKeyName: apiKeyName || null,

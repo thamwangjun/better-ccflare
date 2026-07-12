@@ -274,6 +274,7 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 					getUsageThrottlingFiveHourEnabled: () => false,
 					getUsageThrottlingWeeklyEnabled: () => false,
 					getSystemPromptCacheTtl1h: () => false,
+					getAgentFrontmatterModelFallback: () => false,
 				} as never,
 				provider: {
 					name: "anthropic",
@@ -333,6 +334,7 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 					getUsageThrottlingFiveHourEnabled: () => false,
 					getUsageThrottlingWeeklyEnabled: () => false,
 					getSystemPromptCacheTtl1h: () => false,
+					getAgentFrontmatterModelFallback: () => false,
 				} as never,
 				provider: {
 					name: "anthropic",

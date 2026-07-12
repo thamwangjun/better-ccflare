@@ -16,7 +16,10 @@ import type {
 	RateLimitReason,
 	StrategyStore,
 } from "@better-ccflare/types";
-import { BunSqlAdapter } from "./adapters/bun-sql-adapter";
+import {
+	BunSqlAdapter,
+	PG_CLIENT_QUERY_TIMEOUT_MS,
+} from "./adapters/bun-sql-adapter";
 import { EMBEDDED_INCREMENTAL_VACUUM_WORKER_CODE } from "./inline-incremental-vacuum-worker";
 import { EMBEDDED_VACUUM_WORKER_CODE } from "./inline-vacuum-worker";
 import { ensureSchema, runMigrations } from "./migrations";
@@ -33,6 +36,7 @@ import {
 } from "./repositories/request.repository";
 import { StatsRepository } from "./repositories/stats.repository";
 import { StrategyRepository } from "./repositories/strategy.repository";
+import { UsageHistoryRepository } from "./repositories/usage-history.repository";
 import { withDatabaseRetry } from "./retry";
 
 export interface DatabaseConfig {
@@ -242,6 +246,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 	private agentPreferences: AgentPreferenceRepository;
 	private apiKeys: ApiKeyRepository;
 	private combo: ComboRepository;
+	private usageHistory: UsageHistoryRepository;
 
 	constructor(
 		dbPath?: string,
@@ -283,10 +288,40 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 			const pgIdleTimeout = Number(
 				process.env.BETTER_CCFLARE_DB_IDLE_TIMEOUT ?? 0,
 			);
+			// Server-side timeout must stay below the adapter's client-side race
+			// (PG_CLIENT_QUERY_TIMEOUT_MS) so PG cancels the statement — freeing
+			// its pool connection — before the client gives up. A non-numeric,
+			// zero/negative (PG treats 0 as "disabled"), or too-large override is
+			// silently clamped rather than trusted, since an unbounded value here
+			// reopens the exact connection-leak bug this timeout exists to close.
+			const requestedPgStatementTimeout = Number(
+				process.env.BETTER_CCFLARE_DB_STATEMENT_TIMEOUT,
+			);
+			const maxPgStatementTimeout = PG_CLIENT_QUERY_TIMEOUT_MS - 1000;
+			const pgStatementTimeout =
+				Number.isFinite(requestedPgStatementTimeout) &&
+				requestedPgStatementTimeout > 0 &&
+				requestedPgStatementTimeout <= maxPgStatementTimeout
+					? requestedPgStatementTimeout
+					: maxPgStatementTimeout;
+			// Named prepared statements are disabled by default: Bun's native PG
+			// driver has a known class of bugs (oven-sh/bun#16774) where concurrent
+			// queries sharing a pooled connection can misattribute a cached
+			// statement's column metadata, corrupting binary integer decoding
+			// (ERR_POSTGRES_UNSUPPORTED_INTEGER_SIZE — #284). Unnamed prepared
+			// statements close this window since they don't persist across queries.
+			const pgPrepare = process.env.BETTER_CCFLARE_DB_PG_PREPARE === "true";
 			const sqlClient = new SQL({
 				url: databaseUrl,
 				max: pgMax,
 				idleTimeout: pgIdleTimeout,
+				prepare: pgPrepare,
+				connection: {
+					// Server-side timeout so PG cancels the query and frees the
+					// connection instead of leaving it occupied after the client
+					// gives up. Matches the client-side Promise.race in BunSqlAdapter.
+					statement_timeout: pgStatementTimeout,
+				},
 			});
 			// ERR_POSTGRES_IDLE_TIMEOUT is a normal pool lifecycle event (idle
 			// connection reaped). Without this handler it bubbles as an unhandled
@@ -334,6 +369,7 @@ export class DatabaseOperations implements StrategyStore, Disposable {
 		this.agentPreferences = new AgentPreferenceRepository(this.adapter);
 		this.apiKeys = new ApiKeyRepository(this.adapter);
 		this.combo = new ComboRepository(this.adapter);
+		this.usageHistory = new UsageHistoryRepository(this.adapter);
 	}
 
 	/**
@@ -784,6 +820,32 @@ OAuth tokens will need to be re-authenticated.
 		);
 	}
 
+	// Usage-history operations delegated to repository
+	getUsageHistoryRepository(): UsageHistoryRepository {
+		return this.usageHistory;
+	}
+
+	async recordUsageSnapshot(
+		accountId: string,
+		usage: Record<string, unknown>,
+		now: number,
+	): Promise<void> {
+		await this.usageHistory.recordSnapshot(accountId, usage, now);
+	}
+
+	async getUsageHistory(opts: {
+		accountId: string;
+		windowKey?: string;
+		since?: number;
+		until?: number;
+	}) {
+		return this.usageHistory.getSeries(opts);
+	}
+
+	async pruneUsageSnapshots(cutoffTs: number): Promise<number> {
+		return this.usageHistory.deleteOlderThan(cutoffTs);
+	}
+
 	async forceResetAccountRateLimit(accountId: string): Promise<boolean> {
 		return withDatabaseRetry(
 			async () => {
@@ -890,6 +952,8 @@ OAuth tokens will need to be re-authenticated.
 		project?: string | null,
 		billingType?: string,
 		comboName?: string | null,
+		originalModel?: string | null,
+		appliedModel?: string | null,
 	): Promise<void> {
 		await withDatabaseRetry(
 			() =>
@@ -910,6 +974,8 @@ OAuth tokens will need to be re-authenticated.
 					project,
 					billingType,
 					comboName,
+					originalModel,
+					appliedModel,
 				}),
 			this.retryConfig,
 			"saveRequest",

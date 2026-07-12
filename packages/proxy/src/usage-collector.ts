@@ -15,7 +15,11 @@ import {
 	parseSSELine,
 	resolveCostUsd,
 } from "./usage-extraction";
-import type { EndMessage, StartMessage } from "./worker-messages";
+import {
+	type EndMessage,
+	isModelRewrite,
+	type StartMessage,
+} from "./worker-messages";
 
 interface RequestState {
 	startMessage: StartMessage;
@@ -625,6 +629,10 @@ export class UsageCollector {
 			log.debug(`Saving final request data for ${startMessage.requestId}`);
 		}
 		const projectAtEnd = state.project ?? null;
+		const modelRewritten = isModelRewrite(
+			startMessage.originalModel,
+			startMessage.appliedModel,
+		);
 		// No preliminary INSERT needed — dashboard tracks pending requests via SSE events, not DB queries.
 		this.asyncWriter.enqueue(async () => {
 			try {
@@ -662,6 +670,11 @@ export class UsageCollector {
 					projectAtEnd,
 					state.billingType,
 					startMessage.comboName || null,
+					// Only persist when an actual rewrite occurred — leaves both
+					// columns null for the (overwhelmingly common) unchanged case
+					// instead of duplicating the `model` column's value.
+					modelRewritten ? startMessage.originalModel : null,
+					modelRewritten ? startMessage.appliedModel : null,
 				);
 			} catch (error) {
 				log.error(
@@ -799,6 +812,8 @@ export class UsageCollector {
 			apiKeyName: startMessage.apiKeyName || undefined,
 			project: state.project ?? undefined,
 			billingType: state.billingType,
+			originalModel: startMessage.originalModel || undefined,
+			appliedModel: startMessage.appliedModel || undefined,
 			comboName: startMessage.comboName || undefined,
 		};
 
@@ -894,21 +909,26 @@ let _usageCollector: UsageCollector | null = null;
 /**
  * Initialize (or return the existing) singleton UsageCollector.
  * Must be called after initPayloadEncryption() and after DatabaseFactory
- * is set up, because it creates its own DatabaseOperations + AsyncDbWriter.
+ * is set up, because it creates its own DatabaseOperations + AsyncDbWriter
+ * (unless a shared instance is passed via `sharedDbOps`).
+ *
+ * Awaits schema setup/migrations (initializeAsync is idempotent — safe to
+ * call on an already-initialized shared instance) before returning, so no
+ * caller can enqueue a write against a PostgreSQL database that hasn't been
+ * migrated yet.
  *
  * The `onSummary` callback is called once per completed request and should
  * emit requestEvents + drive cacheBodyStore.
  */
-export function initUsageCollector(
+export async function initUsageCollector(
 	getStorePayloads: () => boolean,
 	onSummary: (summary: RequestResponse) => void,
-): UsageCollector {
+	sharedDbOps?: DatabaseOperations,
+): Promise<UsageCollector> {
 	if (_usageCollector) return _usageCollector;
 
-	const dbOps = new DatabaseOperations();
-	dbOps.initializeAsync().catch((err: unknown) => {
-		log.error("Failed to initialize database async connection:", err);
-	});
+	const dbOps = sharedDbOps ?? new DatabaseOperations();
+	await dbOps.initializeAsync();
 	const asyncWriter = new AsyncDbWriter();
 
 	_usageCollector = new UsageCollector(

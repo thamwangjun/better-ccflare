@@ -24,6 +24,7 @@ import {
 import { AlertService, APIRouter, AuthService } from "@better-ccflare/http-api";
 import {
 	LeastUsedStrategy,
+	SessionAffinityStrategy,
 	SessionStrategy,
 } from "@better-ccflare/load-balancer";
 import { Logger } from "@better-ccflare/logger";
@@ -43,11 +44,15 @@ import {
 import {
 	AutoRefreshScheduler,
 	CacheKeepaliveScheduler,
+	drainUsageCollector,
+	getModelCatalog,
 	getUsageWorkerHealth,
 	getValidAccessToken,
 	handleProxy,
+	initModelCatalogRefresh,
 	initProxy,
 	type ProxyContext,
+	refreshModelCatalog,
 	registerCodexUsageRefresher,
 	registerPollingRestarter,
 	registerRefreshClearer,
@@ -79,6 +84,8 @@ function buildStrategy(
 	switch (name) {
 		case StrategyName.LeastUsed:
 			return new LeastUsedStrategy();
+		case StrategyName.SessionAffinity:
+			return new SessionAffinityStrategy(sessionDurationMs);
 		default:
 			return new SessionStrategy(sessionDurationMs);
 	}
@@ -112,6 +119,12 @@ try {
 const MEMORY_MONITOR_INTERVAL_MS = 60 * 1000;
 const MEMORY_GROWTH_WARN_BYTES = 512 * 1024 * 1024;
 const MEMORY_GROWTH_ERROR_BYTES = 1024 * 1024 * 1024;
+
+export function supportsRefreshBackedUsagePolling(
+	provider: string | null | undefined,
+): boolean {
+	return provider === "anthropic" || provider === "xai";
+}
 
 // Helper function to resolve dashboard assets with fallback
 function resolveDashboardAsset(assetPath: string): string | null {
@@ -212,6 +225,7 @@ let stopRateLimitCleanupJob: (() => void) | null = null;
 let stopDataCleanupJob: (() => void) | null = null;
 let stopWalCheckpointJob: (() => void) | null = null;
 let stopIntegritySchedulerJob: (() => void) | null = null;
+let stopModelCatalogRefreshJob: (() => void) | null = null;
 let autoRefreshScheduler: AutoRefreshScheduler | null = null;
 let cacheKeepaliveScheduler: CacheKeepaliveScheduler | null = null;
 let memoryMonitorInterval: Timer | null = null;
@@ -237,6 +251,12 @@ async function runStartupMaintenance(
 		log.info(
 			`Startup cleanup removed ${removedRequests} requests and ${removedPayloads} payloads (payload=${payloadDays}d, requests=${requestDays}d)`,
 		);
+		const removedSnapshots = await dbOps.pruneUsageSnapshots(
+			Date.now() - config.getUsageHistoryRetentionDays() * TIME_CONSTANTS.DAY,
+		);
+		if (removedSnapshots > 0) {
+			log.info(`Pruned ${removedSnapshots} old usage snapshots`);
+		}
 	} catch (err) {
 		log.error(`Startup cleanup error: ${err}`);
 	}
@@ -397,6 +417,15 @@ function startUsagePollingWithRefresh(
 						.catch((err) =>
 							logger.warn(
 								`Failed to check/clear rate_limited_until for account ${accountId} on capacity restore: ${err}`,
+							),
+						);
+				},
+				(accountId, data) => {
+					proxyContext.dbOps
+						.recordUsageSnapshot(accountId, data, Date.now())
+						.catch((err) =>
+							logger.warn(
+								`Failed to record usage snapshot for account ${accountId}: ${err}`,
 							),
 						);
 				},
@@ -676,11 +705,32 @@ export default async function startServer(options?: {
 	// accepts a getter so it can read the live (post-hot-reload) instance.
 	let currentStrategy: LoadBalancingStrategy | null = null;
 
+	// The model catalog needs a ProxyContext (account credentials, provider)
+	// that is only constructed later in this function. The router is built
+	// eagerly, so route through a mutable reference assigned once the
+	// ProxyContext exists — mirrors the getStrategy() lazy-getter pattern above.
+	let modelCatalogProxyContext: ProxyContext | null = null;
+
 	const apiRouter = new APIRouter({
 		db,
 		config,
 		dbOps,
 		alertService,
+		modelCatalog: {
+			get: () => getModelCatalog(),
+			refresh: async () => {
+				if (!modelCatalogProxyContext) {
+					return {
+						success: false,
+						error: "Model catalog is not initialized yet",
+					};
+				}
+				const result = await refreshModelCatalog(modelCatalogProxyContext, {
+					trigger: "manual",
+				});
+				return { success: result.success, error: result.error };
+			},
+		},
 		runtime: {
 			port,
 			tlsEnabled,
@@ -781,6 +831,13 @@ export default async function startServer(options?: {
 						log.error(`Incremental vacuum error: ${err}`);
 					});
 			}
+			const usageHistoryDays = config.getUsageHistoryRetentionDays();
+			const removedSnapshots = await dbOps.pruneUsageSnapshots(
+				Date.now() - usageHistoryDays * TIME_CONSTANTS.DAY,
+			);
+			if (removedSnapshots > 0) {
+				log.info(`Pruned ${removedSnapshots} old usage snapshots`);
+			}
 		} catch (err) {
 			log.error(`Periodic data retention cleanup error: ${err}`);
 		}
@@ -858,7 +915,7 @@ export default async function startServer(options?: {
 	strategy.initialize?.(strategyStore);
 	currentStrategy = strategy;
 
-	initProxy(() => config.getStorePayloads());
+	await initProxy(() => config.getStorePayloads());
 	startUsageWorker();
 	sendWorkerConfigUpdate(config.getStorePayloads());
 
@@ -872,6 +929,7 @@ export default async function startServer(options?: {
 		refreshInFlight: new Map(),
 		asyncWriter,
 	};
+	modelCatalogProxyContext = proxyContext;
 
 	// Register this server's refresh clearing capability
 	const serverId = `server-${runtime.port}`;
@@ -892,9 +950,9 @@ export default async function startServer(options?: {
 			);
 			return false;
 		}
-		if (account.provider !== "anthropic") {
+		if (!supportsRefreshBackedUsagePolling(account.provider)) {
 			log.warn(
-				`Cannot restart usage polling: account ${account.name} is not an Anthropic OAuth account`,
+				`Cannot restart usage polling: account ${account.name} does not support refresh-backed usage polling`,
 			);
 			return false;
 		}
@@ -1347,15 +1405,21 @@ Available endpoints:
 		);
 	}
 
-	// Start usage polling for Anthropic accounts with token refresh (regardless of paused status)
-	const anthropicAccounts = accounts.filter((a) => a.provider === "anthropic");
-	if (anthropicAccounts.length > 0) {
+	// Start usage polling for refresh-backed providers (regardless of paused status).
+	// Anthropic polls Claude quota windows; xAI polls Grok Build credits via
+	// grok.com gRPC-web and may need to refresh an expired imported Grok CLI token
+	// before the first usage fetch.
+	const refreshBackedUsageAccounts = accounts.filter((a) =>
+		supportsRefreshBackedUsagePolling(a.provider),
+	);
+	if (refreshBackedUsageAccounts.length > 0) {
 		log.info(
-			`Found ${anthropicAccounts.length} Anthropic accounts, starting usage polling...`,
+			`Found ${refreshBackedUsageAccounts.length} refresh-backed usage account(s), starting usage polling...`,
 		);
-		for (const [index, account] of anthropicAccounts.entries()) {
-			log.debug(`Processing account: ${account.name}`, {
+		for (const [index, account] of refreshBackedUsageAccounts.entries()) {
+			log.debug(`Processing usage account: ${account.name}`, {
 				accountId: account.id,
+				provider: account.provider,
 				hasAccessToken: !!account.access_token,
 				hasRefreshToken: !!account.refresh_token,
 				paused: account.paused,
@@ -1365,9 +1429,9 @@ Available endpoints:
 			});
 
 			if (account.access_token || account.refresh_token) {
-				// Start usage polling with token refresh capability
-				// Usage data fetching should work independently of account paused status
-				// Stagger startup by 5s per account to avoid simultaneous 429s on boot
+				// Start usage polling with token refresh capability.
+				// Usage data fetching should work independently of account paused status.
+				// Stagger startup by 5s per account to avoid simultaneous rate-limit bursts.
 				const startupDelayMs = index * 5000;
 				startUsagePollingWithRefresh(
 					account,
@@ -1376,7 +1440,7 @@ Available endpoints:
 					config.getUsagePollIntervalMs(),
 				);
 				log.info(
-					`Started usage polling for account ${account.name}${startupDelayMs > 0 ? ` (delayed ${startupDelayMs / 1000}s)` : ""}`,
+					`Started usage polling for ${account.provider} account ${account.name}${startupDelayMs > 0 ? ` (delayed ${startupDelayMs / 1000}s)` : ""}`,
 				);
 			} else {
 				log.warn(
@@ -1385,7 +1449,9 @@ Available endpoints:
 			}
 		}
 	} else {
-		log.info(`No Anthropic accounts found, usage polling will not start`);
+		log.info(
+			`No refresh-backed usage accounts found, usage polling will not start`,
+		);
 	}
 
 	// Start usage polling for NanoGPT accounts (PayG with optional subscription tracking)
@@ -1533,6 +1599,13 @@ Available endpoints:
 	// Initialize NanoGPT pricing refresh if there are NanoGPT accounts (non-blocking)
 	void initializeNanoGPTPricingIfAccountsExist(dbOps, pricingLogger);
 
+	// Initialize the live Anthropic model catalog refresh scheduler (weekly by
+	// default, configurable via BETTER_CCFLARE_MODELS_REFRESH_HOURS; a
+	// "tick-and-check" scheduler that fires an initial check after a random
+	// 30-120s delay, then re-checks every 15 minutes whether a refresh is due,
+	// rather than a single long-lived interval timer).
+	stopModelCatalogRefreshJob = initModelCatalogRefresh(proxyContext);
+
 	const serverPort = serverInstance.port;
 	if (typeof serverPort !== "number") {
 		throw new Error("Server instance has no valid port");
@@ -1609,6 +1682,10 @@ async function handleGracefulShutdown(signal: string) {
 			stopIntegritySchedulerJob();
 			stopIntegritySchedulerJob = null;
 		}
+		if (stopModelCatalogRefreshJob) {
+			stopModelCatalogRefreshJob();
+			stopModelCatalogRefreshJob = null;
+		}
 		if (autoRefreshScheduler) {
 			autoRefreshScheduler.stop();
 			autoRefreshScheduler = null;
@@ -1651,6 +1728,9 @@ async function handleGracefulShutdown(signal: string) {
 
 		usageCache.clear(); // Stop all usage polling
 		await terminateUsageWorker();
+		// Drain the in-process fallback collector too — usage data that fell
+		// back to it while the worker was stopped would otherwise be lost.
+		await drainUsageCollector();
 		await shutdown();
 		console.log("✅ Shutdown complete");
 		process.exit(0);

@@ -38,6 +38,7 @@ import {
 	createZaiAccountAddHandler,
 } from "./handlers/accounts";
 import {
+	createAgentPreferenceDeleteHandler,
 	createAgentPreferenceUpdateHandler,
 	createAgentsListHandler,
 	createBulkAgentPreferenceUpdateHandler,
@@ -92,6 +93,10 @@ import { createLogsStreamHandler } from "./handlers/logs";
 import { createLogsHistoryHandler } from "./handlers/logs-history";
 import { createCleanupHandler } from "./handlers/maintenance";
 import {
+	createModelsHandler,
+	createModelsRefreshHandler,
+} from "./handlers/models";
+import {
 	createAnthropicReauthCallbackHandler,
 	createAnthropicReauthInitHandler,
 	createCodexDeviceFlowInitHandler,
@@ -120,6 +125,7 @@ import {
 	createReauthNeededHandler,
 	createTokenHealthHandler,
 } from "./handlers/token-health";
+import { createUsageHistoryHandler } from "./handlers/usage-history";
 import { createVersionCheckHandler } from "./handlers/version";
 import { AuthService } from "./services/auth-service";
 import type { APIContext } from "./types";
@@ -198,10 +204,15 @@ export class APIRouter {
 			dbOps.getAdapter(),
 		);
 		const requestsDetailHandler = createRequestsDetailHandler(dbOps);
-		const configHandlers = createConfigHandlers(config, this.context.runtime);
+		const configHandlers = createConfigHandlers(
+			config,
+			this.context.runtime,
+			this.context.modelCatalog,
+		);
 		const logsStreamHandler = createLogsStreamHandler();
 		const logsHistoryHandler = createLogsHistoryHandler();
 		const analyticsHandler = createAnalyticsHandler(this.context);
+		const usageHistoryHandler = createUsageHistoryHandler(this.context);
 		const cacheInsightsHandler = createCacheInsightsHandler(this.context);
 		const anomalyInsightsHandler = createAnomalyInsightsHandler(this.context);
 		const contextInsightsHandler = createContextInsightsHandler(this.context);
@@ -400,6 +411,9 @@ export class APIRouter {
 		this.handlers.set("GET:/api/analytics", (_req, url) => {
 			return analyticsHandler(url.searchParams);
 		});
+		this.handlers.set("GET:/api/usage-history", (_req, url) =>
+			usageHistoryHandler(url.searchParams),
+		);
 		this.handlers.set("GET:/api/insights/cache", (_req, url) =>
 			cacheInsightsHandler(url.searchParams),
 		);
@@ -429,6 +443,7 @@ export class APIRouter {
 		this.handlers.set("POST:/api/agents/bulk-preference", (req) => {
 			const bulkHandler = createBulkAgentPreferenceUpdateHandler(
 				this.context.dbOps,
+				this.context.modelCatalog,
 			);
 			return bulkHandler(req);
 		});
@@ -458,6 +473,12 @@ export class APIRouter {
 		this.handlers.set("GET:/api/families", () =>
 			createFamiliesListHandler(dbOps)(),
 		);
+
+		// Model catalog routes
+		const modelsHandler = createModelsHandler(this.context);
+		const modelsRefreshHandler = createModelsRefreshHandler(this.context);
+		this.handlers.set("GET:/api/models", () => modelsHandler());
+		this.handlers.set("POST:/api/models/refresh", () => modelsRefreshHandler());
 	}
 
 	/**
@@ -724,6 +745,7 @@ export class APIRouter {
 			if (path.endsWith("/preference") && method === "POST") {
 				const preferenceHandler = createAgentPreferenceUpdateHandler(
 					this.context.dbOps,
+					this.context.modelCatalog,
 				);
 				return await this.wrapHandler((req) => preferenceHandler(req, agentId))(
 					req,
@@ -731,9 +753,22 @@ export class APIRouter {
 				);
 			}
 
+			// Agent preference removal (revert to frontmatter/inherit default)
+			if (path.endsWith("/preference") && method === "DELETE") {
+				const preferenceDeleteHandler = createAgentPreferenceDeleteHandler(
+					this.context.dbOps,
+				);
+				return await this.wrapHandler((req) =>
+					preferenceDeleteHandler(req, agentId),
+				)(req, url);
+			}
+
 			// Agent update (PATCH /api/agents/:id)
 			if (parts.length === 4 && method === "PATCH") {
-				const updateHandler = createAgentUpdateHandler(this.context.dbOps);
+				const updateHandler = createAgentUpdateHandler(
+					this.context.dbOps,
+					this.context.modelCatalog,
+				);
 				return await this.wrapHandler((req) => updateHandler(req, agentId))(
 					req,
 					url,
