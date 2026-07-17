@@ -1,5 +1,18 @@
 # Milestones — better-ccflare (Personal Fork)
 
+## v1.3 OpenRouter Anthropic Messages Provider (Shipped: 2026-07-17)
+
+**Phases completed:** 3 phases, 7 plans, 11 tasks
+
+**Key accomplishments:**
+
+- OpenRouterAnthropicProvider class with buildUrl/transformRequestBody/extractUsageInfo/streaming-cost overrides, proven by 34 bun:test cases including captured-real streaming fixture at cost 0.0000070581
+- Wired `openrouter-anthropic` into the shared type system — added PROVIDER_NAMES enum entry, a satisfies-constrained PROVIDER_CONFIG record entry, and the literal to both account mode unions, with `bun run typecheck` passing zero errors.
+- Wired `openrouter-anthropic` into both user-facing account-creation surfaces — CLI (`--mode openrouter-anthropic` dispatch branch, `createOpenRouterAnthropicAccount` DB helper, `--list` inference, help text) and HTTP API (`createOpenRouterAnthropicAccountAddHandler` factory + `POST:/api/accounts/openrouter-anthropic` route) — with `bun run typecheck` passing zero errors.
+- [Rule 1 - Bug] Logger DEBUG gate did not actually route through logBus
+
+---
+
 ## v1.2 — OpenRouter Cost Tracking
 
 **Shipped:** 2026-06-02

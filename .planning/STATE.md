@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v1.3
 milestone_name: OpenRouter Anthropic Messages Provider
-status: completed
-stopped_at: "260619-l4e merged upstream v3.5.27; 260617-3fb async worker live on hot path + server lifecycle"
-last_updated: "2026-06-19T00:00:00.000Z"
-last_activity: 2026-06-19
+status: Awaiting next milestone
+stopped_at: Quick task 260619-l4e COMPLETE — merged upstream tag v3.5.27 into thamw-main (resolved CLAUDE.md keeping fork). Earlier 260617-3fb (async Worker-offloaded usage collector, GOAL MET 8/8) also merged in via this pull. No active work in progress.
+last_updated: "2026-07-17T10:34:01.149Z"
+last_activity: 2026-07-17 — Milestone v1.3 completed and archived
 progress:
-  total_phases: 1
-  completed_phases: 1
-  total_plans: 2
-  completed_plans: 2
+  total_phases: 3
+  completed_phases: 3
+  total_plans: 7
+  completed_plans: 7
   percent: 100
 ---
 
@@ -25,10 +25,10 @@ See: `.planning/PROJECT.md` (updated 2026-06-02 after v1.2 milestone completion)
 
 ## Current Position
 
-Phase: 11
-Plan: Not started
-Status: Milestone complete
-Last activity: 2026-06-20 - Completed quick task 260620-29c: Fix: usage data loss when post-processor worker enters stopped state
+Phase: Milestone v1.3 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-17 — Milestone v1.3 completed and archived
 
 ## Performance Metrics
 
@@ -98,6 +98,23 @@ None.
 | 260619-l4e | Merge upstream tag v3.5.27 into thamw-main (Opus 4.8 + Fable 5, integrity fixes, PG fixes); resolve CLAUDE.md keeping fork | 2026-06-19 | b40180bf | | [260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma](./quick/260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma/) |
 | 260620-29c | Fix: usage data loss when post-processor worker enters stopped state | 2026-06-20 | f2621e25 | Verified | [260620-29c-fix-usage-data-loss-when-post-processor-](./quick/260620-29c-fix-usage-data-loss-when-post-processor-/) |
 
+## Deferred Items
+
+Items acknowledged and deferred at milestone close on 2026-07-17:
+
+| Category | Item | Status |
+|----------|------|--------|
+| debug | chunk-dropped-worker-stopped | open |
+| debug | stalled-streaming-requests | investigating |
+| quick_task | 260601-m3c-implement-parseusage-on-openrouterprovid | unknown |
+| quick_task | 260602-8l6-refactor-cost-02-cost-03-tests-to-exerci | unknown |
+| quick_task | 260602-eax-fix-saverequest-cost-usd-unconditional-o | unknown |
+| quick_task | 260617-3fb-restore-async-worker-offloaded-usage-col | unknown |
+| quick_task | 260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma | unknown |
+| quick_task | 260712-mqk-fix-post-processor-worker-ts-missing-ori | unknown |
+
+Note: `260717-cwg-revert-all-fork-changes-from-quick-tasks` was found as a completely empty orphaned directory (no TASK.md/SUMMARY.md) and was deleted rather than deferred.
+
 ## Session Continuity
 
 Last session: 2026-06-19
@@ -106,5 +123,4 @@ Resume file: none
 
 ## Operator Next Steps
 
-- Run `/gsd-plan-phase 9` to plan Phase 9: Provider Class + Unit Tests
-- Before writing Phase 9 unit tests: verify `z-ai/glm-4.5-air:free` availability on `/api/v1/messages` and confirm `usage:{include:true}` injection requirement
+- Start the next milestone with /gsd-new-milestone

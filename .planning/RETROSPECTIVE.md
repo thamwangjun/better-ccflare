@@ -150,6 +150,50 @@
 
 ---
 
+## Milestone: v1.3 — OpenRouter Anthropic Messages Provider
+
+**Shipped:** 2026-07-17 (work completed 2026-06-04; archival deferred ~6 weeks)
+**Phases:** 3 | **Plans:** 7 | **Timeline:** 2 days (2026-06-02 → 2026-06-04) of build + a long unarchived gap
+
+### What Was Built
+
+- `OpenRouterAnthropicProvider` class extending `AnthropicCompatibleProvider`, routing to OpenRouter's native `/api/v1/messages` endpoint, proven by 34 bun:test cases (Phase 9)
+- Zero `cache_control` injection (verbatim passthrough), provider-preference injection, stable per-account `session_id`, and real streaming + non-streaming cost extraction (Phase 9)
+- Full type-chain wiring, CLI + HTTP API account creation, SSE-sniffer failover for `overloaded_error`, and opt-in `openrouter_metadata` DEBUG logging (Phase 10)
+- Dashboard Add Account form and provider-preference dialog gate widened for the new account type (Phase 11)
+
+### What Worked
+
+- **Extending the right base class up front:** Deciding early (D-00a, locked by research) to extend `AnthropicCompatibleProvider` rather than `OpenRouterProvider` avoided dragging in the unrelated 4-breakpoint cache injector and OAI-format usage parsing — a clean inheritance boundary that held for all 3 phases.
+- **Phase split by architectural boundary held cleanly:** provider class (9) → type/wiring (10) → dashboard (11) mapped directly to file boundaries, so each phase had an unambiguous "done."
+- **Locked research decisions prevented re-litigation:** the 09-CONTEXT.md explicitly listed D-00a through D-00e as "carried forward — do not re-litigate," which kept planning fast and consistent across all 3 phases.
+
+### What Was Inefficient
+
+- **Milestone was fully built and requirement-complete on 2026-06-04 but not archived until 2026-07-17** — a 6-week gap where PROJECT.md's Active checklist stayed stale (only showing 1 of 14 requirements checked) and MILESTONES.md had no v1.3 entry at all. `/gsd-complete-milestone` should run immediately after the last phase's plans land, not get deferred indefinitely.
+- **An orphaned, completely empty quick-task directory** (`260717-cwg-revert-all-fork-changes-from-quick-tasks`) accumulated during the gap with an alarming title and zero content — a sign that quick tasks were started/stubbed without being seen through, worth catching earlier via periodic `audit-open` checks rather than only at milestone close.
+- **Two debug sessions (chunk-dropped-worker-stopped, stalled-streaming-requests) sat open for weeks** across the same gap, never blocking or getting escalated — they were only surfaced by the pre-close artifact audit, not proactively.
+
+### Patterns Established
+
+- **`typeof json.usage.cost === "number"` guard, ported verbatim** from v1.2's `OpenRouterProvider` onto the new subclass — the untrusted-provider-field pattern generalizes cleanly across providers.
+- **FORK PATCH annotation on every injection site in `transformRequestBody`** — now a consistent 3-provider-wide (openai, openrouter, openrouter-anthropic) convention for upstream-merge safety.
+- **Copy cost methods verbatim instead of inheriting** when a new provider subclass would otherwise drag in unrelated logic (cache injection) via a shared parent — favor explicit duplication over a fragile shared base when the two providers' behaviors diverge structurally.
+
+### Key Lessons
+
+1. **Close milestones promptly.** A 6-week gap between "requirements complete" and "archived" let planning docs drift stale and let unrelated tech debt (orphaned quick task, open debug sessions) accumulate invisibly in the same window.
+2. **Run `audit-open` periodically, not just at milestone close.** All 9 open items in this milestone's pre-close audit had been sitting for weeks; catching them incrementally would have made each easier to resolve or intentionally defer.
+3. **Extending the correct base class is a force multiplier.** The single upfront decision to extend `AnthropicCompatibleProvider` instead of `OpenRouterProvider` eliminated an entire category of unwanted inherited behavior (cache injection, OAI usage parsing) across all 3 phases.
+
+### Cost Observations
+
+- Model mix: not tracked for this milestone
+- Sessions: build completed in ~2 sessions across 2026-06-02 → 2026-06-04; archival handled in 1 session on 2026-07-17
+- Notable: build-to-archive lag (6 weeks) far exceeds v1.0/v1.1/v1.2's same-week close pattern — first milestone in this project to exhibit deferred closure
+
+---
+
 ## Cross-Milestone Trends
 
 | Milestone | Phases | Plans | Days | Requirements |
@@ -157,9 +201,11 @@
 | v1.0 | 2 | 4 | 2 | 7/7 |
 | v1.1 | 4 | 11 | 16 | 9/9 |
 | v1.2 | 2 | 4 | 2 | 4/4 |
+| v1.3 | 3 | 7 | 2 (build) + 6wk (archive lag) | 14/14 |
 
 **Trends:**
-- Plans per phase: v1.0 2.0 → v1.1 2.75 → v1.2 2.0 — v1.2 was a tightly-scoped 2-phase feature; the *real* work overflow landed in 5 quick tasks rather than additional plans
-- Days per plan: ~0.5 (v1.0) → ~1.5 (v1.1) → ~0.5 (v1.2) — v1.2 plans were small and surgical, like v1.0 correctness fixes
-- Requirements satisfaction: 100% across all three milestones — audit gate continues to hold
+- Plans per phase: v1.0 2.0 → v1.1 2.75 → v1.2 2.0 → v1.3 2.33 — consistent with prior tightly-scoped milestones
+- Days per plan: ~0.5 (v1.0) → ~1.5 (v1.1) → ~0.5 (v1.2) → ~0.3 (v1.3 build) — v1.3 build itself was fast and surgical
+- Requirements satisfaction: 100% across all four milestones — audit gate continues to hold
 - **Emerging signal:** v1.2's 5 quick tasks (vs 1 in v1.0, ~1 in v1.1) all closed audit-found gaps. The audit is catching what phase verification misses — particularly multi-code-path features (streaming vs non-streaming) and cross-write data integrity
+- **New signal (v1.3):** milestone *build* speed and milestone *closure* speed are decoupling — v1.3 built in 2 days but sat unarchived for 6 weeks, the first time this project has shown that gap. Worth watching whether `/gsd-complete-milestone` gets run promptly after future milestones' last phase lands.

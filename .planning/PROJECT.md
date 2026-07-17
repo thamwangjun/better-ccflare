@@ -10,22 +10,9 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 ## Current State
 
-**Shipped:** v1.2 OpenRouter Cost Tracking (2026-06-02) — 2 phases, 4 plans, 5 quick tasks. OpenRouter requests now persist real `usage.cost` to `requests.cost_usd` across all four response paths, replacing client-side estimates that returned `$0` for unknown models.
+**Shipped:** v1.3 OpenRouter Anthropic Messages Provider (2026-07-17, work completed 2026-06-04) — 3 phases, 7 plans. Added a new `openrouter-anthropic` account type that routes to OpenRouter's native Anthropic Messages endpoint (`POST https://openrouter.ai/api/v1/messages`), passing Claude Code's requests through verbatim instead of transforming Anthropic → OpenAI chat-completions and back. Coexists with the original OpenAI-format `openrouter` provider. Fully wired through provider class, CLI, HTTP API, SSE failover, debug observability, and dashboard.
 
-**In progress (v1.3):** Phase 9 complete (2026-06-02) — `OpenRouterAnthropicProvider` class exists and is TDD-verified (34/34 tests). Phases 10–11 complete (2026-06-04) — provider registered/wired through CLI, HTTP API, and SSE sniffer (Phase 10), then surfaced in the dashboard: the Add Account form offers `openrouter-anthropic` (posts to `POST /api/accounts/openrouter-anthropic`) and the provider-preference dialog gate is widened to the new account type (Phase 11, MGMT-03 + MGMT-04).
-
-## Current Milestone: v1.3 OpenRouter Anthropic Messages Provider
-
-**Goal:** Add a new account type that routes to OpenRouter's native Anthropic Messages endpoint (`POST https://openrouter.ai/api/v1/messages`), passing Claude Code's requests through verbatim instead of transforming Anthropic → OpenAI chat-completions and back.
-
-**Target features:**
-- New `openrouter-anthropic` mode/provider extending `base-anthropic-compatible`, pointed at `https://openrouter.ai/api/v1/messages` with `Authorization: Bearer` auth — **coexists** with the existing OpenAI-format `openrouter` provider (left unchanged)
-- Native `cache_control` passthrough (5m/1h ttl) — no breakpoint-injection hacks needed
-- Provider preference injection — reuse the existing per-account `openrouter_provider_preference` to inject `body.provider = { order, allow_fallbacks }` (native endpoint supports the `provider` extension directly)
-- Cost tracking — persist real cost to `requests.cost_usd` from the native Anthropic usage object (exact cost-field shape on this endpoint is an open question → research)
-- Dashboard management — provider-order dialog gated on the new provider type
-
-**Why:** Passthrough fidelity (Claude Code already speaks Anthropic Messages), native prompt caching, cleaner upstream merges (isolate OpenRouter logic off the shared OpenAI provider), and access to native-only features (thinking modes, output_config, server tools).
+**Awaiting next milestone.**
 
 ## Requirements
 
@@ -50,20 +37,25 @@ Stay current with upstream while running a stable personal instance enhanced wit
 - ✓ `requests.cost_usd` populated with real OpenRouter USD amounts; genuine `$0` preserved (`?? null`), estimate-`$0` collapses to `null`, COALESCE guards dual write — v1.2 (COST-04)
 - ✓ Dashboard Add Account form offers `openrouter-anthropic` mode and submits to `POST /api/accounts/openrouter-anthropic` — v1.3 Phase 11 (MGMT-03)
 - ✓ Dashboard provider-preference dialog gate widened to surface for `openrouter-anthropic` account cards — v1.3 Phase 11 (MGMT-04)
+- ✓ `OpenRouterAnthropicProvider` extends `AnthropicCompatibleProvider`, routes to `https://openrouter.ai/api/v1/messages` with `Authorization: Bearer`, coexists with the OpenAI-format `openrouter` provider — v1.3 Phase 9 (PROV-01/02/03)
+- ✓ Native `cache_control` passthrough — zero injection, verbatim passthrough — v1.3 Phase 9 (CACHE-01)
+- ✓ Provider preference injection (`body.provider = { order, allow_fallbacks }`) reusing `openrouter_provider_preference` on the new provider — v1.3 Phase 9 (ROUTE-01)
+- ✓ Stable per-account `session_id` injection (SHA-256 of `account.id`) for prompt-cache stickiness — v1.3 Phase 9 (ROUTE-02)
+- ✓ Real cost tracking (`usage.cost`) persisted to `requests.cost_usd` from the native Anthropic usage object, both streaming and non-streaming paths — v1.3 Phase 9 (COST-01/02)
+- ✓ CLI (`--mode openrouter-anthropic`) and HTTP API (`POST /api/accounts/openrouter-anthropic`) account creation — v1.3 Phase 10 (MGMT-01/02)
+- ✓ Mid-stream `overloaded_error` SSE failover for `openrouter-anthropic` accounts (`ANTHROPIC_SHAPE_PROVIDERS` extension) — v1.3 Phase 10 (FAIL-01)
+- ✓ Opt-in DEBUG logging of `openrouter_metadata` (backend, latency) via `X-OpenRouter-Experimental-Metadata` header — v1.3 Phase 10 (OBS-01)
 
 ### Active
 
-<!-- v1.3 OpenRouter Anthropic Messages Provider — see REQUIREMENTS.md for REQ-IDs -->
+<!-- Awaiting next milestone requirements -->
 
-- [ ] New `openrouter-anthropic` provider/mode → OpenRouter native Anthropic Messages endpoint, coexisting with the OpenAI-format `openrouter`
-- [ ] Native `cache_control` passthrough (5m/1h ttl) on the new provider
-- [ ] Provider preference injection reusing `openrouter_provider_preference` on the new provider
-- [ ] Cost tracking persisted to `requests.cost_usd` from the native Anthropic usage object
-- [x] Dashboard provider-order dialog gated on the new provider type — validated in Phase 11 (MGMT-04); add-account form wiring validated in Phase 11 (MGMT-03)
+(None yet — see REQUIREMENTS.md once next milestone is scoped)
 
 ### Future
 
 - [ ] Per-request OpenRouter provider selection (`x-better-ccflare-openrouter-provider` header → `provider.order` injection) — deferred from v1.1
+- [ ] Extended `provider` routing fields in `openrouter_provider_preference` schema (`sort`, `data_collection`, `zdr`, `max_price`) — deferred from v1.3, requires schema migration + UI expansion
 
 ### Out of Scope
 
@@ -71,10 +63,11 @@ Stay current with upstream while running a stable personal instance enhanced wit
 - Auto-publishing to npm/GitHub Container Registry — upstream's release system handles this; never bump versions manually
 - Rebuilding or replacing core proxy logic — extend the existing provider abstraction, don't rewrite it
 - `provider.only` support — eliminates all fallback; always use `provider.order`
+- Modifying the existing OpenAI-format `openrouter` provider — v1.3's `openrouter-anthropic` coexists as a separate provider; isolating native-endpoint logic keeps upstream merges clean
 
 ## Context
 
-**Shipped:** v1.2 (2026-06-02) — 2 phases, 4 plans, 5 quick tasks in 2 days. v1.1 (2026-05-21) — 4 phases, 11 plans, ~268 commits in 16 days.
+**Shipped:** v1.3 (2026-07-17 archived, work completed 2026-06-04) — 3 phases, 7 plans in 2 days. v1.2 (2026-06-02) — 2 phases, 4 plans, 5 quick tasks in 2 days. v1.1 (2026-05-21) — 4 phases, 11 plans, ~268 commits in 16 days.
 
 **Codebase:** Bun monorepo (`apps/server`, `apps/cli`, ~15 `packages/`). Provider abstraction layer in `packages/providers/src/providers/` — each provider extends `BaseProvider` with `buildRequest()`, `parseRateLimit()`, `getUsage()`. OpenRouter lives at `packages/providers/src/providers/openrouter/`.
 
@@ -98,11 +91,21 @@ Stay current with upstream while running a stable personal instance enhanced wit
 - Shared `usage-extraction.ts` module (`parseSSELine`, `resolveCostUsd`, `extractUsageFromJson`, `extractUsageFromData`) imported by worker + tests
 - `cost_usd` writers use `?? null` (preserve real `$0`); COALESCE in `save()` `ON CONFLICT` (`request.repository.ts`)
 
+**Fork patches added in v1.3 (`thamw-main`):**
+- `OpenRouterAnthropicProvider` class extending `AnthropicCompatibleProvider` (`packages/providers/src/providers/openrouter-anthropic/provider.ts`) — buildUrl, transformRequestBody (3 FORK-PATCH injections: provider preference, session_id, usage), extractUsageInfo/extractStreamingUsage/parseUsage/readFinalSseCost
+- `PROVIDER_NAMES.OPENROUTER_ANTHROPIC` + `PROVIDER_CONFIG` entry + account-mode unions across the shared type system
+- CLI `--mode openrouter-anthropic` dispatch + HTTP API `POST /api/accounts/openrouter-anthropic` route
+- `ANTHROPIC_SHAPE_PROVIDERS` extended for `openrouter-anthropic` mid-stream `overloaded_error` failover (`sse-rate-limit-sniffer.ts`)
+- `X-OpenRouter-Experimental-Metadata` header + DEBUG-gated `openrouter_metadata` logging tap
+- Dashboard Add Account form + provider-preference dialog gate widened for `openrouter-anthropic`
+
 **Known tech debt:**
 - Pre-existing 27 Biome lint errors in dashboard React components (unrelated to fork patches) — v1.1
 - Discard Changes dialog behavior has no formal UAT test (SC-4 gap) — testing gap only — v1.1
 - Manual live-streaming USD-in-logs check (D-05) unperformed by design — requires `:free` model force-routed to OpenRouter, never Anthropic/`claude` — v1.2
 - Dashboard `$0` display gap (`RequestDetailsModal.tsx:149`, `RequestsTab.tsx:886`) — out of scope; data persisted, display only — v1.2
+- Two open debug sessions carried into next milestone as deferred tech debt (see `.planning/STATE.md` Deferred Items): `chunk-dropped-worker-stopped` (root cause of async usage-collector worker entering `stopped` state, unconfirmed after 3 cycles) and `stalled-streaming-requests` (two untested competing hypotheses — OAuth refresh fetch hang vs. SQLite `SQLITE_BUSY` lock contention)
+- 6 quick tasks with unresolved completion status acknowledged as deferred at v1.3 close (see `.planning/STATE.md` Deferred Items) — v1.3
 
 ## Constraints
 
@@ -134,6 +137,12 @@ Stay current with upstream while running a stable personal instance enhanced wit
 | `?? null` (not `\|\| null`) for `cost_usd` writers; estimate-`0 → undefined` in worker | Distinguishes a genuine `$0` from `:free` models (persist as `0`) from an estimate-`$0` for unknown models (collapse to `null`) | ✓ Good |
 | `COALESCE(EXCLUDED.cost_usd, requests.cost_usd)` in `save()` ON CONFLICT | Live path writes real cost first; worker's later upsert with a failed parse (`null`) must not overwrite it | ✓ Good |
 | Extract `usage-extraction.ts` shared module imported by worker + tests | Eliminates inline-copy drift — tests exercise the exact production code path | ✓ Good |
+| Extend `AnthropicCompatibleProvider`, not `OpenRouterProvider`, for `openrouter-anthropic` | Avoids inheriting the 4-breakpoint `cache_control` injector and OAI-format `extractUsageInfo`; native endpoint needs neither | ✓ Good |
+| Zero `cache_control` injection on `openrouter-anthropic` — verbatim passthrough | Claude Code already sends its own cache blocks in Anthropic format; no breakpoint-injection hacks needed on the native endpoint | ✓ Good |
+| Stable per-account `session_id` (SHA-256 hash of `account.id`), always-on injection | Maximizes prompt-cache stickiness for a single-user personal fork; deterministic and easy to unit-test; rejected per-conversation hashing as unnecessary complexity | ✓ Good |
+| Add `openrouter-anthropic` to `ANTHROPIC_SHAPE_PROVIDERS` in the SSE sniffer | Native endpoint's SSE stream is byte-for-byte Anthropic shape and emits genuine `overloaded_error` envelopes — without this, failover only matches `rate_limit_error` | ✓ Good |
+| Always inject `X-OpenRouter-Experimental-Metadata: enabled` header (no conditional) | Simpler branch-free header logic; accepted trade-off of every production request carrying an experimental header in exchange for `openrouter_metadata` visibility | ✓ Good |
+| `openrouter_metadata` logged only when `BETTER_CCFLARE_DEBUG` is set | `message_stop` carries no usage/cost — separate observability tap from the cost path, silenced by default like all other debug logging | ✓ Good |
 
 ## Evolution
 
@@ -153,4 +162,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-04 after Phase 11 (dashboard-wiring) completion*
+*Last updated: 2026-07-17 after v1.3 milestone completion*

@@ -1,22 +1,47 @@
-### Phase 11: Dashboard Wiring
+# Roadmap: better-ccflare (Personal Fork)
 
-**Goal**: Users can create and manage `openrouter-anthropic` accounts entirely through the dashboard UI, with the provider-preference dialog available for the new account type
-**Depends on**: Phase 10
-**Requirements**: MGMT-03, MGMT-04
-**Success Criteria** (what must be TRUE):
+## Milestones
 
-  1. The Add Account form surfaces `"OpenRouter Anthropic Messages (API Key)"` as a selectable mode option and successfully submits account creation to `POST /api/accounts/openrouter-anthropic`
-  2. An `openrouter-anthropic` account card in the accounts list displays the provider-preference settings button (the dialog gate is widened from `openrouter`-only)
+- ✅ **v1.0 Correctness & Maintenance** — Phases 1-2 (shipped 2026-05-05)
+- ✅ **v1.1 Extended caching for openrouter models** — Phases 3-6 (shipped 2026-05-21)
+- ✅ **v1.2 OpenRouter Cost Tracking** — Phases 7-8 (shipped 2026-06-02)
+- ✅ **v1.3 OpenRouter Anthropic Messages Provider** — Phases 9-11 (shipped 2026-07-17)
 
-**Plans**: 2 plans
-Plans:
+## Phases
 
-**Wave 1**
+<details>
+<summary>✅ v1.0 Correctness & Maintenance (Phases 1-2) — SHIPPED 2026-05-05</summary>
 
-- [x] 11-01-PLAN.md — Wave 0 SSR tests (MGMT-03 form-render RED, MGMT-04 gate) + the provider-preference gate widen (MGMT-04 complete)
+See [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md) for full phase details.
 
-**Wave 2** *(depends on 11-01: form-render test must exist first)*
+</details>
 
-- [x] 11-02-PLAN.md — MGMT-03 full add-account wiring: SelectItem + form block + submit branch (AccountAddForm), addOpenRouterAnthropicAccount (api.ts), handler + prop pass-through (AccountsTab)
+<details>
+<summary>✅ v1.1 Extended caching for openrouter models (Phases 3-6) — SHIPPED 2026-05-21</summary>
 
-**UI hint**: yes
+See [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md) for full phase details.
+
+</details>
+
+<details>
+<summary>✅ v1.2 OpenRouter Cost Tracking (Phases 7-8) — SHIPPED 2026-06-02</summary>
+
+See [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md) for full phase details.
+
+</details>
+
+<details>
+<summary>✅ v1.3 OpenRouter Anthropic Messages Provider (Phases 9-11) — SHIPPED 2026-07-17</summary>
+
+See [milestones/v1.3-ROADMAP.md](milestones/v1.3-ROADMAP.md) for full phase details.
+
+</details>
+
+## Progress
+
+| Phase | Milestone | Plans Complete | Status | Completed |
+|-------|-----------|-----------------|--------|-----------|
+| 1-2 | v1.0 | 4/4 | Complete | 2026-05-05 |
+| 3-6 | v1.1 | 11/11 | Complete | 2026-05-21 |
+| 7-8 | v1.2 | 4/4 | Complete | 2026-06-02 |
+| 9-11 | v1.3 | 7/7 | Complete | 2026-07-17 |
