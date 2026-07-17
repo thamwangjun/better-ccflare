@@ -3,7 +3,7 @@ status: open
 slug: chunk-dropped-worker-stopped
 trigger: "In logs: [WARN] Chunk dropped: worker is in 'stopped' state, cannot dispatch"
 created: 2026-06-20
-updated: 2026-06-20
+updated: 2026-07-13
 cycles: 3
 ---
 
@@ -129,6 +129,32 @@ C. **Worker crashes fast enough that restart logs appear in 30s burst** — if w
 
 D. **startUsageWorker() not called** — unlikely for fresh Docker boot but possible if
    the server is started via some wrapper that bypasses the normal startup sequence.
+
+E. **(New, 2026-07-13 — cross-referenced from `.planning/debug/stalled-streaming-requests.md`)
+   SQLite `SQLITE_BUSY` lock contention during worker init/operation.** That session found
+   `withBusyRetry` in `packages/database/src/adapters/bun-sql-adapter.ts` can retry
+   `SQLITE_BUSY` for up to **10 minutes**, and each retry attempt is a synchronous `bun:sqlite`
+   call that blocks for up to `busy_timeout` (5-10s default) while SQLite's own busy-handler
+   waits. `post-processor.worker.ts:83` opens its own `DatabaseOperations()` — a synchronous
+   SQLite open + `ensureSchema()` + `runMigrations()` (`database-operations.ts:301-323`,
+   already flagged as hypothesis A above) — on the SAME SQLite file as the main thread's
+   instance AND the periodic `vacuum-worker.ts`/`integrity-check-worker.ts` (quick check every
+   6h, full check every 24h, per `integrity-scheduler.ts`). If the worker's init-time SQLite
+   open/schema-check happens to overlap with a VACUUM or full integrity_check holding a
+   competing lock, the worker's own DB calls could block for a meaningful fraction of (or
+   exceed, if repeated) the 60s×3 startup timeout window — a plausible NEW mechanism for
+   hypothesis A beyond a hard throw: not necessarily a throw, but a slow/delayed init that
+   still causes the "ready" handshake to miss its window, exhausting MAX_RESTARTS. Also
+   relevant to steady-state (post-boot) chunk drops: if the worker's DatabaseOperations hits
+   sustained SQLITE_BUSY contention during normal operation (not just init), its own writes
+   could stall for minutes, which — depending on how `UsageWorkerController` classifies a slow
+   vs. crashed worker — might contribute to it being perceived as unhealthy. NOT yet confirmed
+   whether the controller's health/timeout logic would actually misinterpret a slow-but-alive
+   worker as crashed; this is a hypothesis to verify, not a confirmed mechanism. The other
+   session's DB is 10-20 GiB (15-day payload retention vs. 1-day default), which independently
+   increases the likelihood/duration of this contention — see that session's `## Mitigation
+   Options` for concrete levers (lower `DATA_RETENTION_DAYS`, reduce
+   `CCFLARE_FULL_INTEGRITY_CHECK_INTERVAL`, verify `PRAGMA auto_vacuum=2` is actually active).
 
 ## Code Changes Applied in Cycles 1+2 (REVERTED — see note below)
 
