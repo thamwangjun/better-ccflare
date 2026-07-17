@@ -82,6 +82,7 @@ Recent decisions affecting current work:
 - [v100.0 Roadmap]: WORKER-02 (transferable-ArrayBuffer semantics on the billing-critical usage-collector worker) requires an explicit round-trip integration test written before the Phase 18 rewrite, not just verified after.
 - [v100.0 Roadmap]: Node SEA standalone binaries are out of scope for this milestone (deferred to v2 as DIST-01) — Phase 19 delivers npm `bin`+shebang only.
 - [v100.0 Roadmap]: Migration strategy is incremental — every phase's success criteria include "app still starts/serves requests with no regression," not just "new thing added," per user's locked constraint that no phase may land in a broken, half-migrated state.
+- [v100.0 Roadmap, 2026-07-17]: User directed that all 8 phases anticipate failure of the "app still starts/serves requests with no regression" criterion on first pass, given documented Bun/Node behavioral differences (PITFALLS.md). ROADMAP.md now carries an explicit "Verification Expectation" note instructing planner/executor/verifier agents to budget a gap-closure plan/wave per phase by default, rather than treating first-pass failure as mis-scoping. Mirrored into PROJECT.md's v100.0 Constraints for persistence.
 
 ### Pending Todos
 

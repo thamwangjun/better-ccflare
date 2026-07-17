@@ -31,6 +31,7 @@ Stay current with upstream while running a stable personal instance enhanced wit
 - Migration strategy: incremental — every phase leaves the app fully functional/deployable, never a big-bang cutover
 - Package manager: npm workspaces (zero additional vendor dependency)
 - Node version floor: Node 24 (current LTS per user correction — verify via research, not assumed from training data)
+- **Verification expectation:** every phase's "app still starts/serves requests with no regression" success criterion is anticipated to fail on the first pass for at least some phases, given real Bun/Node behavioral differences (see `.planning/research/PITFALLS.md`). Planning and execution should budget a gap-closure plan/wave per phase by default rather than treating first-pass failure as a sign of mis-scoping. See `.planning/ROADMAP.md`'s "Verification Expectation" note for the full directive to planner/executor/verifier agents.
 
 ## Requirements
 

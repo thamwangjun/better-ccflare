@@ -42,6 +42,12 @@ See [milestones/v1.3-ROADMAP.md](milestones/v1.3-ROADMAP.md) for full phase deta
 
 **Milestone Goal:** Fully migrate better-ccflare off Bun — package manager, test runner, leaf runtime APIs, HTTP server, database drivers, dashboard build, worker threads, and CLI/Docker/CI — with every phase leaving the app fully functional and deployable. By the end of this milestone, Bun is dropped completely from the repo.
 
+**⚠️ Verification Expectation (applies to every phase, 12-19):** Every phase's final success criterion — "the app still starts/serves requests with no functional regression" — is a genuine risk, not a formality. Bun and Node.js have real, research-documented behavioral differences at nearly every seam this milestone touches (HTTP keep-alive/timeout semantics, Worker event APIs, SQLite driver stability tiers, WASM loading, env-var expansion, and more — see `.planning/research/PITFALLS.md`). **Planner and executor agents should not treat first-pass failure of this criterion as a sign the phase was mis-scoped or needs re-planning from scratch.** Instead:
+- Budget a gap-closure plan/wave within the phase by default — do not assume the primary migration plan(s) alone will satisfy the regression check.
+- When the regression check fails, diagnose against the phase's `PITFALLS.md`-sourced risks first before treating it as a novel bug.
+- Verifier agents (`gsd-verifier`) should expect and allow a phase to need one additional gap-closure plan before signing off — this is the anticipated pattern for this milestone, not a scope failure.
+- This expectation does not lower the bar for what "done" means — the app must genuinely start and serve requests with no regression before a phase is marked complete. It only sets the expectation that reaching that bar may take more than one plan per phase.
+
 - [ ] **Phase 12: Foundation — Package Manager & TypeScript Config** - npm workspaces replace bun.lock; tsconfig off bun-types; dotenv env parity
 - [ ] **Phase 13: Test Runner Migration** - 167+ test files run under vitest instead of bun:test, with verified mock/spy interception
 - [ ] **Phase 14: Runtime API Cleanup** - leaf Bun.* call sites (Bun.file, Bun.serve in oauth-redirect.ts, Bun.env, zstd/gzip, resolveSync) replaced with node:* equivalents
