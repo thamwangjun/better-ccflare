@@ -3,10 +3,10 @@ gsd_state_version: 1.0
 milestone: v100.0
 milestone_name: Bun-to-Node.js Migration
 status: planning
-last_updated: "2026-07-17T10:54:47.754Z"
+last_updated: "2026-07-17T11:00:00.000Z"
 last_activity: 2026-07-17
 progress:
-  total_phases: 0
+  total_phases: 8
   completed_phases: 0
   total_plans: 0
   completed_plans: 0
@@ -20,14 +20,16 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-07-17 after v1.3 milestone completion)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** v100.0 Bun-to-Node.js Migration — defining requirements
+**Current focus:** v100.0 Bun-to-Node.js Migration — roadmap created, Phase 12 ready to plan
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-07-17 — Milestone v100.0 started
+Phase: 12 of 19 (Foundation — Package Manager & TypeScript Config)
+Plan: — (not yet planned)
+Status: Ready to plan
+Last activity: 2026-07-17 — ROADMAP.md created: 8 phases (12-19), 19/19 requirements mapped
+
+Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
@@ -53,6 +55,13 @@ Last activity: 2026-07-17 — Milestone v100.0 started
 | 10 | 4 | - | - |
 | 11 | 2 | - | - |
 | 12 | ? | - | - |
+| 13 | ? | - | - |
+| 14 | ? | - | - |
+| 15 | ? | - | - |
+| 16 | ? | - | - |
+| 17 | ? | - | - |
+| 18 | ? | - | - |
+| 19 | ? | - | - |
 
 **Recent Trend:**
 
@@ -68,16 +77,15 @@ Last activity: 2026-07-17 — Milestone v100.0 started
 Decisions are logged in PROJECT.md Key Decisions table.
 Recent decisions affecting current work:
 
-- [Phase 7–8 split]: COST-01/02/03 are grouped in Phase 7 (provider + worker cost extraction from all response paths); COST-04 is Phase 8 (skip estimate, persist). Splitting at this boundary gives a verification checkpoint — cost extraction can be tested before wiring through to persistence.
-- Provider-level cost extraction (COST-01) in `extractUsageInfo()` flows into the proxy context; worker-level extraction (COST-02, COST-03) handles the two response paths (SSE streaming final chunk vs. non-streaming body JSON)
-- COST-04 is the integration point in `pricing.ts` — skip `estimateCostUSD()` when `costUsd` is already available from the provider/worker chain
-- [v1.3 ARCHITECTURE.md vs SUMMARY.md conflict]: ARCHITECTURE.md (earlier draft) claimed SSE sniffer needs no change and streaming cost has no `cost` field. SUMMARY.md (later, with empirical probe confirmation) corrects both: streaming cost IS present in native endpoint's final `message_delta` (empirically confirmed 2026-06-02); `ANTHROPIC_SHAPE_PROVIDERS` DOES need extending; port `readFinalSseCost()` from `OpenRouterProvider`. SUMMARY.md positions are authoritative.
-- [v1.3 Phase 9 scope]: ROUTE-02 (`session_id` injection) and COST-01/02 (real cost extraction) map to Phase 9 because they are implemented directly in the provider class overrides (`transformRequestBody`, `extractUsageInfo`, `extractStreamingUsage`). FAIL-01 moved to Phase 10 — it lives in `sse-rate-limit-sniffer.ts`, a separate file from the provider class, and belongs with the wiring phase.
+- [v100.0 Roadmap]: 8 phases derived 1:1 from the 8 requirement categories (FOUND/TEST/API/HTTP/DB/DASH/WORKER/DEPLOY), sequenced Foundation → Test Runner → Runtime API Cleanup → HTTP → Database → Dashboard Build → Worker Threads → CLI/Docker/CI, per research's dependency ordering (test runner early for a regression net; DB before Workers since worker files import `bun:sqlite` directly; CLI/Docker/CI strictly last).
+- [v100.0 Roadmap]: DB-03 (`retry.ts` `Bun.sleepSync` → `Atomics.wait` fix) is scoped as an explicit, tested success criterion in Phase 16, not left as an afterthought — it's a previously-unknown event-loop-blocking production risk, not just a nice-to-have.
+- [v100.0 Roadmap]: WORKER-02 (transferable-ArrayBuffer semantics on the billing-critical usage-collector worker) requires an explicit round-trip integration test written before the Phase 18 rewrite, not just verified after.
+- [v100.0 Roadmap]: Node SEA standalone binaries are out of scope for this milestone (deferred to v2 as DIST-01) — Phase 19 delivers npm `bin`+shebang only.
+- [v100.0 Roadmap]: Migration strategy is incremental — every phase's success criteria include "app still starts/serves requests with no regression," not just "new thing added," per user's locked constraint that no phase may land in a broken, half-migrated state.
 
 ### Pending Todos
 
-- Verify `z-ai/glm-4.5-air:free` model availability on `/api/v1/messages` native endpoint (confirm before writing Phase 9 unit tests)
-- Confirm whether `usage:{include:true}` must be injected in `transformRequestBody()` or if cost is returned by default on the native endpoint (one-time live check)
+None yet.
 
 ### Blockers/Concerns
 
@@ -116,10 +124,10 @@ Note: `260717-cwg-revert-all-fork-changes-from-quick-tasks` was found as a compl
 
 ## Session Continuity
 
-Last session: 2026-06-19
-Stopped at: Quick task 260619-l4e COMPLETE — merged upstream tag v3.5.27 into thamw-main (resolved CLAUDE.md keeping fork). Earlier 260617-3fb (async Worker-offloaded usage collector, GOAL MET 8/8) also merged in via this pull. No active work in progress.
+Last session: 2026-07-17
+Stopped at: ROADMAP.md and STATE.md created for v100.0 (8 phases, 12-19). REQUIREMENTS.md traceability updated to 19/19 mapped. Awaiting user approval, then `/gsd-plan-phase 12`.
 Resume file: none
 
 ## Operator Next Steps
 
-- Research current Node.js equivalents for Bun-specific APIs, then define v100.0 requirements and roadmap
+- Review and approve the v100.0 roadmap, then run `/gsd-plan-phase 12` to begin Foundation phase planning
