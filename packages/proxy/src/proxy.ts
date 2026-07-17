@@ -32,7 +32,6 @@ import {
 	recordSessionRequest,
 } from "./session-governor";
 import {
-	getUsageCollector,
 	initUsageCollector,
 	tryGetUsageCollector,
 	type UsageCollectorHealth,
