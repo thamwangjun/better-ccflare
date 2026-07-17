@@ -12,7 +12,25 @@ Stay current with upstream while running a stable personal instance enhanced wit
 
 **Shipped:** v1.3 OpenRouter Anthropic Messages Provider (2026-07-17, work completed 2026-06-04) — 3 phases, 7 plans. Added a new `openrouter-anthropic` account type that routes to OpenRouter's native Anthropic Messages endpoint (`POST https://openrouter.ai/api/v1/messages`), passing Claude Code's requests through verbatim instead of transforming Anthropic → OpenAI chat-completions and back. Coexists with the original OpenAI-format `openrouter` provider. Fully wired through provider class, CLI, HTTP API, SSE failover, debug observability, and dashboard.
 
-**Awaiting next milestone.**
+## Current Milestone: v100.0 Bun-to-Node.js Migration
+
+**Goal:** Fully migrate better-ccflare off Bun — runtime, package manager/workspaces, test runner, SQLite driver, HTTP server, worker threads, standalone CLI binary packaging, and Docker/CI. By the end of this milestone, Bun is dropped completely from the repo.
+
+**Target features:**
+- Package manager/workspaces: `bun.lock` → npm workspaces
+- Runtime/HTTP server: `Bun.serve()` → Node.js equivalent (research-pending)
+- Test runner: `bun:test` → Node.js equivalent (research-pending)
+- SQLite driver: `packages/database/src/adapters/bun-sql-adapter.ts` → Node.js equivalent (research-pending)
+- Worker threads: 3 inline Bun workers (`inline-worker.ts`, `inline-vacuum-worker.ts`, `inline-integrity-check-worker.ts`) → `node:worker_threads`
+- Standalone CLI binary packaging: Bun's compiler → Node.js equivalent (research-pending)
+- Docker base image (currently `debian:bookworm-slim` + Bun) and CI/release automation → Node-based
+
+**Why:** Business-continuity risk aversion around depending on Bun (Oven) as a single-vendor runtime — community support continuity, code-quality/AI-slop-rewrite risk, and commercial buyout/licensing risk. Not primarily a bug fix, though it may incidentally help the two open Bun-worker-related debug sessions (`chunk-dropped-worker-stopped`, `stalled-streaming-requests`).
+
+**Constraints locked before requirements:**
+- Migration strategy: incremental — every phase leaves the app fully functional/deployable, never a big-bang cutover
+- Package manager: npm workspaces (zero additional vendor dependency)
+- Node version floor: Node 24 (current LTS per user correction — verify via research, not assumed from training data)
 
 ## Requirements
 

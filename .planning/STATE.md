@@ -1,34 +1,33 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3
-milestone_name: OpenRouter Anthropic Messages Provider
-status: Awaiting next milestone
-stopped_at: Quick task 260619-l4e COMPLETE — merged upstream tag v3.5.27 into thamw-main (resolved CLAUDE.md keeping fork). Earlier 260617-3fb (async Worker-offloaded usage collector, GOAL MET 8/8) also merged in via this pull. No active work in progress.
-last_updated: "2026-07-17T10:34:01.149Z"
-last_activity: 2026-07-17 — Milestone v1.3 completed and archived
+milestone: v100.0
+milestone_name: Bun-to-Node.js Migration
+status: planning
+last_updated: "2026-07-17T10:54:47.754Z"
+last_activity: 2026-07-17
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 7
-  completed_plans: 7
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-06-02 after v1.2 milestone completion)
+See: `.planning/PROJECT.md` (updated 2026-07-17 after v1.3 milestone completion)
 
 **Core value:** Stay current with upstream while running a stable personal instance enhanced with OpenRouter improvements and a clean patch workflow.
-**Current focus:** Milestone complete
+**Current focus:** v100.0 Bun-to-Node.js Migration — defining requirements
 
 ## Current Position
 
-Phase: Milestone v1.3 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-17 — Milestone v1.3 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-17 — Milestone v100.0 started
 
 ## Performance Metrics
 
@@ -123,4 +122,4 @@ Resume file: none
 
 ## Operator Next Steps
 
-- Start the next milestone with /gsd-new-milestone
+- Research current Node.js equivalents for Bun-specific APIs, then define v100.0 requirements and roadmap
