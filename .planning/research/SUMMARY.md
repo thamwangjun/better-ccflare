@@ -1,223 +1,164 @@
 # Project Research Summary
 
-**Project:** better-ccflare personal fork — v1.3 OpenRouter Anthropic Messages Provider
-**Domain:** New provider/account type for a Bun-based Claude API load-balancer proxy
-**Researched:** 2026-06-02
-**Confidence:** HIGH
+**Project:** better-ccflare — Bun-to-Node.js Migration (Milestone v100.0)
+**Domain:** Runtime migration for a long-running, production Bun HTTP proxy (SSE streaming, SQLite WAL + Postgres, worker threads, standalone CLI binary)
+**Researched:** 2026-07-17
+**Confidence:** HIGH overall
 
 ## Executive Summary
 
-v1.3 adds a single new account/provider type (`openrouter-anthropic`) that routes Claude Code's native Anthropic Messages requests to OpenRouter's native `/api/v1/messages` endpoint. Unlike the existing `openrouter` provider — which translates Anthropic Messages to OpenAI Chat Completions and back — this new type is a true passthrough: request bodies arrive at OpenRouter verbatim, preserving `cache_control` blocks, `thinking` config, `context_management.edits`, and all other native-Anthropic fields without shape transformation. The infrastructure for this is almost entirely already in place from v1.1–v1.2: the DB column for provider preferences, the cost chain (`resolveCostUsd`, COALESCE ON CONFLICT), and the SSE streaming infrastructure all carry forward without modification. The implementation is bounded: one new class in `packages/providers/`, four overrides, and a propagation of the `"openrouter-anthropic"` mode string through eleven files across six packages.
+This is a like-for-like runtime port, not a rewrite: the whole request/response handler layer is already written against the Fetch API, so the correct strategy is a thin Fetch-to-Node adapter (`node:http` + `srvx`) at the single `server.ts` entry point, not a callback-style rewrite of every handler. The same "preserve the existing seam, replace only the runtime primitive underneath it" logic applies to the database adapter, the worker-spawn mechanism, and the CLI packaging story. Four Bun pieces need genuinely non-mechanical rewrites (not renames): the HTTP entry adapter, the Worker API (browser-style `onmessage`/Blob-URL → Node's EventEmitter-style `worker_threads` with no Blob support), the CLI's single-file-binary packaging (Node SEA has no cross-compilation, forcing a CI matrix), and — critically — a currently-dormant footgun in `packages/database/src/retry.ts` where `Bun.sleepSync`'s fallback path (`spawnSync("sleep", ...)`) will silently activate the moment Bun is gone and synchronously block the entire event loop (all in-flight SSE streams) during every SQLite-retry backoff. This directly compounds one of the project's two open, unresolved debug investigations (`stalled-streaming-requests`, whose leading hypothesis is `SQLITE_BUSY` contention) — fixing it (via `Atomics.wait` on a `SharedArrayBuffer`) must be scoped explicitly into the database-driver phase, not left as an afterthought.
 
-The recommended approach is to extend `AnthropicCompatibleProvider` (not `OpenRouterProvider`) and override the cost/routing methods: `getEndpoint()`, `buildUrl()` (copy verbatim from `OpenRouterProvider` to avoid the double-segment path bug), `transformRequestBody()` (inject `body.provider` from `openrouter_provider_preference`; zero `cache_control` injection), and `extractUsageInfo()` / `extractStreamingUsage()` / `parseUsage()` (call `super`, then attach the real `usage.cost`). **Both streaming and non-streaming must surface OpenRouter's real `usage.cost`, mirroring v1.2.** v1.2's existing `openrouter` provider reads `usage.cost` from the final SSE `message_delta` event for streaming (`readFinalSseCost()` in `openrouter/provider.ts`) and from `usage.cost` for non-streaming — there is NO estimate fallback for streaming, and the new provider must preserve that. The cost-extraction overrides (`parseUsage`, `extractStreamingUsage`, `readFinalSseCost`) should be ported from `OpenRouterProvider` to the new class. The "blast radius" is predictable and grep-verifiable: every file containing the string `"openrouter"` as a mode or provider literal must gain a sibling `"openrouter-anthropic"` entry.
+The recommended stack: `srvx` over `node:http` (preserves the Fetch handler contract with zero router rewrite), `better-sqlite3` over `node:sqlite` (the latter is Stability 1.1 "Active development" on the locked Node 24 floor — not production-safe for a billing-critical DB, despite being zero-dependency), `pg` over `postgres.js` (its `query(text, values)` shape is a direct structural match for the existing hand-rolled `?`→`$N` placeholder-conversion in `bun-sql-adapter.ts`), `vitest` over `node:test` (near drop-in for `bun:test`'s jest-shaped API across 167 test files), `node:worker_threads` with the inlining/base64/Blob mechanism replaced by an esbuild-CJS-bundle + `eval:true` recipe, and a two-tier CLI distribution (npm `bin`+shebang as primary, Node SEA as secondary/optional for no-runtime binaries).
 
-**Correction to earlier draft (now EMPIRICALLY CONFIRMED):** an earlier version of this summary claimed the native endpoint's SSE stream carries no `cost` field (inferred from the undocumented `MessagesDeltaEvent.usage` schema in `openapi.yaml`) and therefore streaming cost would fall back to `estimateCostUSD()`. That was a faulty inference.
-
-**Empirical confirmation (2026-06-02, real billed request to `deepseek/deepseek-v4-flash` via `probe-streaming-cost.sh`):** the native `/api/v1/messages` STREAMING endpoint DOES deliver cost in the final `event: message_delta`. Captured `usage` object:
-```json
-{"input_tokens":7,"output_tokens":32,"output_tokens_details":{"thinking_tokens":32},
- "cache_creation_input_tokens":null,"cache_read_input_tokens":4,"server_tool_use":null,
- "service_tier":null,"speed":"standard","cost":0.0000070581,"is_byok":false,
- "cost_details":{"upstream_inference_cost":0.0000070581,
-   "upstream_inference_prompt_cost":7.669e-7,"upstream_inference_completions_cost":0.0000062912}}
-```
-This is the same `message_delta` event v1.2's `readFinalSseCost()` already parses, and the cache token field names (`cache_creation_input_tokens`/`cache_read_input_tokens`) match what the `AnthropicCompatibleProvider` base class reads. The new provider extracts real cost on both streaming and non-streaming — mirroring v1.2.
-
-**Implementation note — `usage:{include:true}` opt-in:** the probe sent `"usage":{"include":true}` in the request body. v1.2's existing `openrouter` provider does NOT inject this. To guarantee `cost` appears, the new provider should inject `usage:{include:true}` in `transformRequestBody()` (FORK PATCH, since Claude Code won't send it). Open micro-question for Phase 1: re-run the probe WITHOUT that line to determine whether cost is returned by default on the native endpoint (if so, injection is belt-and-suspenders rather than required).
-
-The primary risk is therefore the breadth of type-union propagation: missing even one of the eleven registration sites causes a silent mismatch (wrong DB value, 404 from dashboard, missing UI button). The mitigation is a single grep check after wiring: `grep -rn '"openrouter"' packages/ --include="*.ts" | grep -v test | grep -v "openrouter-anthropic"` should produce no hits that need a parallel entry.
-
----
+Key risk to manage across the whole migration: `better-sqlite3` (a native addon) reverses Bun's zero-native-build-step story, with real downstream consequences for CI (single-job cross-compile → real per-platform matrix), Docker (needs prebuilt `.node` binaries or build tooling), and any future Node-SEA CLI packaging (native addons + Linux-arm64-in-Docker-via-QEMU is a known-broken combination). Decide this once, early, and budget the CI/Docker/SEA implications explicitly. A second cross-cutting risk: `database-operations.ts` is NOT a thin consumer of `bun-sql-adapter.ts` — it has ~20 direct `bun:sqlite` PRAGMA/maintenance call sites (plus `migrations.ts` and all 4 worker files importing `Database` directly) that bypass the adapter entirely and must be explicitly included in the database-driver phase's scope.
 
 ## Key Findings
 
 ### Recommended Stack
 
-No new npm dependencies are required. The implementation is pure TypeScript using existing packages. The provider hierarchy already provides the right base class: `AnthropicCompatibleProvider` (which extends `BaseAnthropicCompatibleProvider`) handles Anthropic SSE parsing, rate-limit header reading, and `cache_creation_input_tokens` / `cache_read_input_tokens` field extraction — all correct for the native OpenRouter endpoint. The existing v1.2 cost chain (`AsyncDbWriter`, `resolveCostUsd()`, COALESCE in `save()`) persists without modification.
+Six Bun-specific pieces need Node.js replacements: `Bun.serve()` → `node:http` + `srvx` (adapter only, preserves existing Fetch-based router); `bun:test` → `vitest`; `bun:sqlite` → `better-sqlite3`; `Bun.SQL` (Postgres) → `pg`; Bun `Worker` (+ build-time inlining) → `node:worker_threads` (inlining mechanism rewritten, not ported, as an esbuild-CJS-bundle + `eval:true` recipe); `bun build --compile` → npm `bin`+shebang (primary) with Node SEA (secondary). npm workspaces (already the locked decision) needs no re-litigation, only mechanics (delete `bun.lock`, rewrite `workspace:*`→`*`, regenerate `package-lock.json`).
 
 **Core technologies:**
-- `OpenRouterAnthropicProvider extends AnthropicCompatibleProvider` — correct inheritance; avoids OAI-format field readers and 4-breakpoint injector from `OpenRouterProvider`
-- `bun:test` with mock fetch — all unit tests; no live calls in CI
-- `buildUrl()` verbatim copy from `OpenRouterProvider` — strips leading `/v1` from pathname to avoid `/api/v1/v1/messages` double-segment
+- `srvx@0.11.22`: Fetch-API-to-`node:http` adapter — keeps `fetch(req: Request): Response` handler signature across all ~40 handler files untouched; purpose-built by the h3/UnJS team (Nitro/h3 authors), 33.7M weekly downloads.
+- `better-sqlite3@12.11.1`: SQLite driver — synchronous (matches `bun:sqlite`'s execution model), mature and semver'd, unlike `node:sqlite`'s Stability 1.1 status on the Node 24 floor.
+- `pg@8.22.0`: Postgres driver — `query(text, values)` API is a direct structural match for the SQL-string + params-array pattern `bun-sql-adapter.ts` already produces; 36.1M weekly downloads.
+- `vitest@4.1.10`: Test runner — near drop-in for `bun:test`'s jest-shaped `describe/it/expect`/`mock()`/`mock.module()` API across 167 test files; `node:test` would force a much larger mechanical-but-risky rewrite.
+- `node:worker_threads` (built-in): Worker threads, EventEmitter-style, no Blob-URL support — the inline-worker mechanism is rewritten as esbuild CJS bundling + `eval:true` string-source spawning, not ported literally.
+- Node SEA (built-in, official): CLI standalone-binary packaging — no cross-compilation (unlike Bun's single-runner multi-target build), requires a GitHub Actions matrix across native OS/arch runners.
 
-**Critical version requirements:** None new. Existing Bun >= 1.2.8, TypeScript 6.0.2, and the `@dqbd/tiktoken` token counter for `estimateCostUSD()` fallback are already present.
+### Expected Features (reframed as migration parity checklist)
 
-### Expected Features
+**Must have (table stakes, P1):** npm workspaces replace `bun.lock`; `Bun.serve()` → `node:http` with byte-identical SSE passthrough; `bun:test` suite passes under the new runner; SQLite/Postgres drivers port with WAL/pooling parity; worker threads preserve transferable-ArrayBuffer zero-copy semantics; CLI binary installable via `npm install -g` AND still produces standalone per-platform binaries; Docker image builds/runs on Node base; CI/release automation fully off Bun; `.env` loading parity (`$VAR` expansion via `dotenv`, not Node's native env-file flag); graceful shutdown preserved and improved; `retry.ts`'s `Bun.sleepSync` fallback fixed to be production-quality.
 
-**Must have (table stakes):**
-- Correct endpoint routing to `https://openrouter.ai/api/v1/messages` with `Authorization: Bearer` auth
-- Verbatim request passthrough (no `cache_control` injection — Claude Code sends its own blocks)
-- Cost tracking from real `usage.cost` on BOTH streaming (final SSE `message_delta`) and non-streaming responses (typeof-guarded), mirroring v1.2 — no estimate fallback for streaming
-- Provider preference injection via existing `openrouter_provider_preference` column
-- Dashboard provider-preference dialog gate widened to include `"openrouter-anthropic"`
-- CLI `--add-account --mode openrouter-anthropic` registration
-- `ANTHROPIC_SHAPE_PROVIDERS` extended in `sse-rate-limit-sniffer.ts` so `overloaded_error` mid-stream frames trigger account failover
+**Should have (decision points, P2 — need explicit sign-off):** `node:sqlite` vs `better-sqlite3` (resolved in favor of `better-sqlite3`); Vitest vs `node:test` (resolved in favor of vitest).
 
-**Should have (competitive, v1.3.x):**
-- `session_id` injection — routes all turns of a Claude Code session to the same OpenRouter backend from request 1, maximizing prompt cache hit rate (without it, sticky routing activates only after first observed cache hit)
-- `openrouter_metadata` debug logging — opt-in visibility into which backend served each request
+**Defer (P3):** consolidating the 3–4 worker-inlining build steps into shared tooling; re-evaluating `node:sqlite` once it reaches Stability 2 on a later Node LTS line.
 
-**Defer (v2+):**
-- Extended `provider` routing fields in `openrouter_provider_preference` schema (`sort`, `data_collection`, `zdr`, `max_price`) — requires schema migration, UI expansion
-- Per-request OpenRouter provider selection via `x-better-ccflare-openrouter-provider` header
+**Explicitly out of scope (anti-features):** swapping to a full HTTP framework, changing DB schema while swapping drivers, adding new architectural dependencies (ORMs, DI swaps), expanding CLI platform coverage, expanding test coverage during the runner port, restructuring the DI container, or formally folding in the two open debug investigations as in-scope deliverables (track incidental resolution as a bonus finding with its own regression test).
 
 ### Architecture Approach
 
-The integration is additive and bounded. The new class slots into the existing provider registry via one import and one `registerProvider()` call. The proxy stack (account-selector to request-handler to response-processor to post-processor worker) is fully polymorphic and requires zero changes; all per-provider behavior dispatches through the overridden methods. The mode string `"openrouter-anthropic"` must be propagated through type unions and runtime conditions in eleven files; ARCHITECTURE.md enumerates every site with exact line numbers and action required. The `PROVIDER_NAMES` / `PROVIDER_CONFIG` gap in `packages/types/src/provider-config.ts` is the highest-priority registration to get right — omitting it causes `getDefaultEndpoint()` to fall through to `"https://api.anthropic.com"` (account ban risk for diagnostic code paths).
+Organize the migration around "preserve the existing seam, replace only what's underneath it" — the Fetch-API router contract, the DB adapter's method interface, and the worker dev-mode file-path pattern all survive unchanged; only the runtime primitives they wrap change. One cross-cutting fact governs everything: every workspace package's `package.json` points `main`/`exports` directly at `.ts` source with zero build step. Node 24's native type-stripping can preserve this DX for the backend after fixing 3 files with non-erasable constructor parameter properties; workers and the CLI binary get a real esbuild bundle step for packaging reasons, ordinary packages stay build-step-free.
 
 **Major components:**
-
-1. `OpenRouterAnthropicProvider` (`packages/providers/src/providers/openrouter-anthropic/`) — new class; four overrides; TDD with `bun:test`
-2. Type union propagation across 11 files — ARCHITECTURE.md Section 3 is the authoritative checklist; `bun run typecheck` after Step 4 surfaces remaining gaps
-3. HTTP API route + handler (`POST /api/accounts/openrouter-anthropic`) — new dedicated handler, never modifies the existing `openrouter` handler
-4. Dashboard wiring (`AccountAddForm`, `AccountListItem`, `AccountsTab`, `api.ts`) — mode branch, SelectItem, and provider-preference gate extension
+1. **Fetch-to-Node HTTP adapter** (`srvx` wrapping `node:http`) — converts Node's `(req, res)` into `Request`/`Response`, `router.ts` and all handlers unchanged.
+2. **Database adapter + facade** (`bun-sql-adapter.ts` swapped to `better-sqlite3`/`pg`; **`database-operations.ts` and `migrations.ts` also directly touched** — they bypass the adapter with ~20 direct `bun:sqlite` PRAGMA/maintenance calls).
+3. **Worker-thread spawn + inlining pipeline** — 4 worker files rewritten for `parentPort` instead of `self`, spawned via esbuild-CJS-bundle + `eval:true`, `post-processor.worker.ts`'s top-level `await` wrapped in async IIFE.
+4. **CLI packaging pipeline** — npm `bin`+shebang primary; Node SEA secondary, requiring a CI matrix restructuring.
+5. **Dashboard build pipeline** — `Bun.build()` → esbuild (HTML-entrypoint has no esbuild equivalent, hand-template output HTML); `embed.ts` already Bun-free; `dashboard-web/package.json` needs an explicit `exports` map addition for `./dist/embedded` (required, or `ERR_PACKAGE_PATH_NOT_EXPORTED`).
 
 ### Critical Pitfalls
 
-1. **`buildUrl()` double-segment** — `AnthropicCompatibleProvider.buildUrl()` deduplication does not fire for `/v1/messages` against `baseUrl = .../api/v1`; result is `/api/v1/v1/messages` (all requests 404). Prevention: copy `OpenRouterProvider.buildUrl()` verbatim; unit test `buildUrl("/v1/messages", "")` must return exactly `"https://openrouter.ai/api/v1/messages"`.
-
-2. **Wrong parent class (`OpenRouterProvider`)** — inherits 4-breakpoint `cache_control` injector and OAI-format `extractUsageInfo`; injector pushes requests over the 4-block limit (HTTP 400); usage reads `prompt_tokens_details` (absent on native endpoint, cache tokens always 0). Prevention: extend `AnthropicCompatibleProvider` only; unit test with 4-block body asserts zero blocks added.
-
-3. **`extractUsageInfo` reads OAI-format cache fields** — copying `OpenRouterProvider.extractUsageInfo()` reads `prompt_tokens_details.cache_write_tokens` / `cached_tokens`, which do not exist on the native endpoint. Prevention: call `super.extractUsageInfo()` (base class reads Anthropic-native field names correctly), then attach `usage.cost` with `typeof` guard.
-
-4. **Provider name missing from type/config registration sites** — `"openrouter-anthropic"` omitted from `PROVIDER_NAMES` / `PROVIDER_CONFIG` causes `getDefaultEndpoint()` to fall through to `"https://api.anthropic.com"` (ban risk). Omitted from the dashboard `AccountAddForm` mode branch produces 404 on account creation. Prevention: run the grep check after Phase 2 wiring; `bun run typecheck` after type union updates.
-
-5. **SSE rate-limit sniffer not extended** — `ANTHROPIC_SHAPE_PROVIDERS` does not include `"openrouter-anthropic"`; `overloaded_error` mid-stream frames are ignored; overloaded accounts continue receiving requests without failover. Prevention: one-line addition to `sse-rate-limit-sniffer.ts` with unit test.
-
-6. **Porting the wrong streaming-cost behavior** — the new provider must REUSE v1.2's real-cost extraction, not invent an estimate fallback. Port `parseUsage()`, `extractStreamingUsage()`, and `readFinalSseCost()` from `OpenRouterProvider` so streaming surfaces the real `usage.cost` from the final SSE `message_delta`. Do NOT return `costUsd: undefined` to trigger `estimateCostUSD()` for streaming — that would regress v1.2's real-cost behavior. (Note: do not blindly extend `OpenRouterProvider` to get this — it also carries the cache_control injector and OAI-format token reads; copy only the cost methods onto the `AnthropicCompatibleProvider` subclass.)
-
----
-
-## Streaming Cost: Resolved (mirror v1.2)
-
-An earlier draft framed streaming cost as an open "estimate vs. null" decision built on the assumption that the native endpoint emits no `cost` in its SSE stream. **That premise was wrong and the question is closed.** v1.2's `openrouter` provider already extracts the real `usage.cost` from the final streaming `message_delta` event (`readFinalSseCost()`), and the new provider must do the same. OpenRouter's `usage.cost` is a platform usage-accounting extension delivered on the final streaming event regardless of endpoint shape; the `openapi.yaml` Anthropic-Messages schema simply doesn't document it.
-
-**Implementation:** Port `parseUsage()` / `extractStreamingUsage()` / `readFinalSseCost()` from `OpenRouterProvider` to the new `AnthropicCompatibleProvider` subclass (clone-before-super for the streaming reader, `typeof === "number"` guard on cost, `// FORK PATCH:` annotation). Real cost on both streaming and non-streaming; the v1.2 worker chain (`resolveCostUsd`, COALESCE) persists it unchanged.
-
-**Only remaining empirical task:** confirm the native `/api/v1/messages` final SSE event actually carries `usage.cost` (integration test, Phase 4) — strong default that it does, since it's the same platform feature v1.2 relies on.
-
----
-
-## Authoritative Blast Radius — Sites Requiring "openrouter-anthropic"
-
-Consolidated from ARCHITECTURE.md and PITFALLS.md. Every `"openrouter"` literal in the type/mode/provider role below needs a sibling `"openrouter-anthropic"` entry.
-
-### Type Unions (add `| "openrouter-anthropic"`)
-
-| File | What Changes |
-|------|-------------|
-| `packages/types/src/provider-config.ts` | `PROVIDER_NAMES` entry + `PROVIDER_CONFIG` keyed record |
-| `packages/types/src/account.ts` | `AccountListItem.mode` union (line 281) + `AddAccountOptions.mode` union (line 305) |
-| `packages/cli-commands/src/commands/account.ts` | Two mode union literals (lines 47, 79) |
-| `packages/dashboard-web/src/api.ts` | `initAddAccount` mode parameter union (line 259) |
-| `packages/dashboard-web/src/components/AccountsTab.tsx` | `handleAddAccount` mode parameter union (line 120) |
-| `packages/dashboard-web/src/components/accounts/AccountAddForm.tsx` | Four local mode union type literals (lines 28, 157, 431, 1020) |
-
-### Runtime Special-Case Conditions (add sibling branch)
-
-| File | What Changes |
-|------|-------------|
-| `packages/cli-commands/src/commands/account.ts` | New `else if (mode === "openrouter-anthropic")` branch (~line 1360) |
-| `packages/cli-commands/src/commands/account.ts` | `listAccounts()` mode inference — extend condition at line 1659 |
-| `packages/cli-commands/src/commands/help.ts` | Mode list + description (lines 9, 20) |
-| `packages/http-api/src/handlers/accounts.ts` | New dedicated `createOpenRouterAnthropicAccountAddHandler` function |
-| `packages/http-api/src/router.ts` | New route `POST:/api/accounts/openrouter-anthropic` |
-| `packages/dashboard-web/src/components/accounts/AccountAddForm.tsx` | New SelectItem + new form branch for `mode === "openrouter-anthropic"` |
-| `packages/dashboard-web/src/components/accounts/AccountListItem.tsx` | Widen provider-preference dialog gate at line 350 |
-| `packages/proxy/src/handlers/sse-rate-limit-sniffer.ts` | Extend `ANTHROPIC_SHAPE_PROVIDERS` set |
-
-### Sites That Do NOT Need Changes
-
-`response-processor.ts`, `usage-extraction.ts`, `post-processor.worker.ts`, DB migrations (SQLite + PG), `account.repository.ts`, `AccountOpenrouterProviderPreferenceDialog.tsx` (the dialog itself), `auto-refresh-scheduler.ts`, `toAccount()` / `toAccountResponse()` in `account.ts`. All cost-chain and SSE-parsing infrastructure is provider-agnostic.
-
----
+1. **The Fetch-API contract is load-bearing everywhere, not just `server.ts`** — confine the HTTP diff to a single adapter file (`srvx`); `router.ts` signatures must remain unchanged as the verification criterion.
+2. **`Bun.sleepSync`'s dormant `spawnSync` fallback becomes the primary, event-loop-blocking path the instant Bun is removed** — a previously-unknown landmine that directly compounds the open `stalled-streaming-requests` debug investigation. Fix with `Atomics.wait()` on a `SharedArrayBuffer`, scoped explicitly into the database-driver phase, with a regression test asserting no child process is spawned.
+3. **Node's Worker API is a rewrite, not a rename** — Bun's browser-style `onmessage`/Blob-URL pattern has no Node equivalent (EventEmitter-style `.on("message")`, no Blob support). A mechanical import-swap silently produces a controller whose handlers never fire (billing-critical usage-collector worker) — requires an explicit `ready→ack→summary→shutdown-complete` round-trip integration test written before the rewrite.
+4. **`database-operations.ts` is not a thin adapter consumer — it has ~20 direct `bun:sqlite` call sites**, plus `migrations.ts` and all 4 worker files import `Database` directly. Scope the database-driver phase across all of: `bun-sql-adapter.ts`, `database-operations.ts`, `migrations.ts`, and the 4 worker files.
+5. **`node:sqlite`'s experimental status collides with the native-addon alternative's CI/Docker/SEA costs** — `node:sqlite` is Stability 1.1 on Node 24 (not production-safe); `better-sqlite3` is a native addon that breaks the current zero-native-build-step CI/Docker/binary pipeline. Decide once, early, and budget the CI/Docker/SEA fallout explicitly.
+6. **Node's HTTP server has no single `idleTimeout` knob** — `server.ts` maxes Bun's `idleTimeout` at 255s to keep SSE alive; Node splits this into `keepAliveTimeout`/`headersTimeout`/`requestTimeout`, and `http.Server#close()` doesn't forcibly close idle keep-alive connections (can hang graceful shutdown). Exit criterion: SIGTERM-during-active-SSE-stream integration test.
 
 ## Implications for Roadmap
 
-### Phase 1: Provider Class + Unit Tests
-**Rationale:** Everything else depends on the provider class existing and behaving correctly. The four high-risk method overrides (buildUrl, transformRequestBody, extractUsageInfo, extractStreamingUsage) must be unit-tested before any integration wiring begins. A wrong parent class choice or incorrect buildUrl would cause all-requests-fail or silent data corruption that is harder to diagnose once the full stack is wired.
-**Delivers:** `OpenRouterAnthropicProvider` class with passing unit tests covering all pitfall scenarios; provider barrel and index exports.
-**Addresses:** Endpoint routing, Bearer auth, real cost tracking on BOTH streaming (ported `readFinalSseCost`) and non-streaming, cache field reading.
-**Avoids:** Pitfalls 2 (wrong parent), 3 (OAI-format fields), 6 (wrong streaming-cost behavior), 7 (buildUrl double-segment).
-**Research flag:** None — patterns are well-documented. Test model on `/api/v1/messages` must be verified before tests are written.
+Suggested phase structure (reconciled from FEATURES.md's dependency graph, ARCHITECTURE.md's Q6 phase ordering, and PITFALLS.md's phase-mapping):
 
-### Phase 2: Type Wiring + CLI + HTTP API + SSE Sniffer
-**Rationale:** Type unions must be complete before dashboard or integration tests can compile. CLI and HTTP API wiring enables manual verification (add account, list accounts, curl via proxy) before the dashboard is built. SSE sniffer and FORK PATCH annotations belong here as coexistence wiring tasks.
-**Delivers:** `bun run typecheck` passes; `--add-account --mode openrouter-anthropic` works; `POST /api/accounts/openrouter-anthropic` returns 200 with correct DB row; `overloaded_error` frames trigger failover; fork annotations and `HIGH_RISK_FILES` updated.
-**Addresses:** Full provider mode string registration, CLI mode dispatch and help text, HTTP API dedicated handler and route, SSE sniffer extension, fork hygiene.
-**Avoids:** Pitfalls 4 (incomplete registration), 6 (SSE sniffer), 8 (handler reuse), 9 (fork annotations).
-**Research flag:** None for wiring — standard propagation. Verify grep check at end: `grep -rn '"openrouter"' packages/ --include="*.ts" | grep -v test | grep -v "openrouter-anthropic"` should produce no unextended hits.
+### Phase 1: Foundation — Package manager + TypeScript config + build-step decision
+**Rationale:** Nothing downstream can be typechecked/linted/resolved without npm workspaces and `bun-types` removed; cheapest possible unblock (3-file fix) for native-TS execution everywhere downstream.
+**Delivers:** Working `npm install` (with `workspace:*`→`*` rewritten — npm does NOT support the `workspace:` protocol), `package-lock.json`, root `tsconfig.json` off `bun-types`, split `tsconfig.node.json`/`tsconfig.dom.json` to eliminate DOM/Node lib timer-handle collision.
+**Addresses:** Table Stakes #1 (npm workspaces), #9 (env var parity).
+**Avoids:** Pitfall 2 (non-erasable TS enum), Pitfall 3 (`workspace:*` not an npm protocol).
 
-### Phase 3: Dashboard Wiring
-**Rationale:** Dashboard changes are UI-only and have no upstream callers — they can be done after the API is stable. AccountAddForm, AccountListItem, AccountsTab, and api.ts are all contained within `packages/dashboard-web/`.
-**Delivers:** "Add Account" form surfaces `openrouter-anthropic` as a mode option; account cards show provider-preference settings button; API client method calls the new route.
-**Addresses:** AccountAddForm mode branch + SelectItem, AccountListItem dialog gate, AccountsTab union, api.ts method + union.
-**Avoids:** Pitfall 5 (dialog gate not extended).
-**Research flag:** None — mechanical propagation.
+### Phase 2: Test runner migration (start early, trail to completion)
+**Rationale:** Every subsequent phase needs a working regression suite in the target runner to prove parity.
+**Delivers:** `vitest` running the test suite; mechanical `bun:test`→`vitest` import codemod.
+**Uses:** `vitest@4.1.10`.
+**Avoids:** the "looks done but isn't" gap around `mock.module()`/module-namespace `spyOn()` (7+ files) — verify actual interception, not just "compiles."
 
-### Phase 4: Integration Test + Verification
-**Rationale:** End-to-end validation via a real (`:free` model, non-Anthropic, force-routed) request through the full proxy stack. Must confirm: real cost persists for BOTH streaming and non-streaming, cache token fields are populated, provider preference injection fires, account failover on overload.
-**Delivers:** Confidence the full stack works together; empirical confirmation that the native `/api/v1/messages` final SSE event carries `usage.cost` (streaming) and the non-streaming body carries `usage.cost`.
-**Uses:** `x-better-ccflare-account-id` header + non-Anthropic `:free` model (availability on `/api/v1/messages` confirmed at Phase 1 start).
-**Avoids:** Pitfalls 10 (Anthropic ban risk), 11 (test model unavailable on native endpoint).
-**Research flag:** Verify at Phase 1 start which `:free` model is available on `/api/v1/messages`. `z-ai/glm-4.5-air:free` is the established safe model for the OAI-format provider but native endpoint availability must be confirmed. Document chosen model in Phase 4 plan.
+### Phase 3: Runtime API de-Bunification (leaf modules)
+**Rationale:** Self-contained swaps with no cross-package coordination — do these early to shrink the Bun-API surface before the harder integration points.
+**Delivers:** Every leaf `Bun.*` call site (`server.ts`'s `resolveSync`/`file`, `oauth-redirect.ts`'s `Bun.serve`, `file-writer.ts`'s `Bun.file().text()`, the OpenAI-responses-adapter's zstd/gzip calls) replaced with `node:*` equivalents.
+
+### Phase 4: HTTP server migration — `Bun.serve()` → `node:http` + `srvx`
+**Rationale:** Core function of the app; must be scoped as a single adapter file per Pitfall 1.
+**Delivers:** `server.ts` speaking `node:http` via a Fetch-API adapter; explicit SSE timeout tuning; graceful shutdown using `server.closeAllConnections()`.
+**Addresses:** Table Stakes #2, #10.
+**Avoids:** Pitfall 1, Pitfall 10.
+
+### Phase 5: Database driver swap (can run in parallel with Phase 6)
+**Rationale:** High correctness/data-integrity risk; must be scoped wider than "swap the adapter class."
+**Delivers:** `better-sqlite3` + `pg` replacing `bun:sqlite`/`Bun.SQL` across `bun-sql-adapter.ts`, `database-operations.ts` (~20 direct call sites), `migrations.ts`, and all 4 worker files; WAL-mode fallback logic verified byte-for-byte; `retry.ts`'s sync-sleep fixed to `Atomics.wait`.
+**Uses:** `better-sqlite3@12.11.1`, `pg@8.22.0`.
+**Avoids:** Pitfall 6 (critical — spawnSync blocking landmine), Pitfall 7 (dual SQLite+Postgres scope), Pitfall 8 (node:sqlite experimental status / native-addon CI fallout).
+
+### Phase 6: Dashboard build pipeline
+**Rationale:** Independent of DB work, can run in parallel with Phase 5.
+**Delivers:** `Bun.build()` → esbuild + `@tailwindcss/cli`; `dashboard-web/package.json` `exports` map addition (required).
+
+### Phase 7: Worker threads — hardest phase
+**Rationale:** Must come after Phase 5 (all worker files import `bun:sqlite` directly); needs the build-tool decision from Phase 6.
+**Delivers:** `self`→`parentPort` rewrite in 4 worker files; spawn sites rewritten from `.onmessage=`/Blob-URL to `.on("message")`/`{eval:true}` CJS-bundle spawning; `post-processor.worker.ts`'s top-level `await` wrapped in async IIFE; `{smol:true}` dropped.
+**Avoids:** Pitfall 4 (event-API mismatch — write the round-trip test FIRST), Pitfall 5 (Blob-URL unsupported).
+
+### Phase 8: CLI packaging, Docker, CI/release automation — last, strictly
+**Rationale:** Docker and CI can't be meaningfully exercised until runtime/DB/workers/dashboard all work under plain `node`; this is also the biggest CI-topology change (Node SEA has no cross-compilation) — budget it now even though work happens last.
+**Delivers:** npm `bin`+shebang CLI (primary); optional Node SEA per-platform builds via a GitHub Actions matrix (secondary); workflows off `oven-sh/setup-bun` onto `actions/setup-node`+`npm ci`; Docker image on Node base; SignPath re-validated against a real SEA `.exe` if pursued.
+**Addresses:** Table Stakes #6, #7, #8.
+**Avoids:** Pitfall 9 (SEA cross-platform + native-addon interplay).
 
 ### Phase Ordering Rationale
 
-- Phase 1 before Phase 2: TypeScript compilation of the wiring phase depends on the provider class existing and exporting correctly.
-- Phase 2 before Phase 3: Dashboard API client calls the HTTP route; route must exist before dashboard is wired.
-- Phase 3 before Phase 4: Integration test validates the full end-to-end stack including dashboard-initiated account creation.
-- Parallelizable within phases: `PROVIDER_NAMES`/`PROVIDER_CONFIG` (Phase 2, Step 3 in ARCHITECTURE.md) can be done simultaneously with Phase 1 provider class work. CLI wiring and HTTP API wiring can proceed in parallel once type unions are complete.
+- Package manager (1) must be first, unconditionally — every downstream phase depends on it.
+- Test runner (2) should start immediately after Phase 1, not wait — every phase needs a regression net in the target runner.
+- Leaf-module de-Bunification (3) before the two hard integration points shrinks the Bun-API surface at low risk.
+- HTTP server (4) and Database (5)/Dashboard (6) are largely independent and can parallelize, but both gate a fully deployable checkpoint.
+- Worker threads (7) must come after Database (5) — all worker files import `bun:sqlite` directly; porting worker-spawn first would leave the app undeployable mid-phase.
+- CLI/Docker/CI (8) last, strictly — depends on every other phase's artifacts working under plain Node, and is where the SQLite-driver (5) and build-step (1) decisions resurface as CI/Docker/SEA constraints.
 
 ### Research Flags
 
-Phases needing deeper research during planning:
-- **Phase 4:** Test model availability on `/api/v1/messages` — `z-ai/glm-4.5-air:free` is known-good for the OAI-format endpoint but must be verified for the native Anthropic Messages endpoint. Use `provider.order = ["ZhipuAI"]` to constrain routing away from Anthropic infrastructure.
+Needs deeper research during planning:
+- **Phase 4 (HTTP server):** SSE/idle-timeout semantics under Node 24's exact `keepAliveTimeout`/`headersTimeout`/`requestTimeout` behavior need empirical verification under real streaming load.
+- **Phase 5 (Database driver):** `pg`'s BIGINT/NUMERIC-as-string coercion vs `Bun.SQL`'s current behavior needs per-column empirical audit; lock the `node:sqlite` vs `better-sqlite3` decision with an explicit stability-tier justification.
+- **Phase 7 (Worker threads):** prototype the CJS-bundle + `eval:true` recipe early to confirm it works before committing — the one piece requiring a genuine new architectural pattern, not just an API swap.
+- **Phase 8 (CLI/CI):** Node SEA cross-platform build matrix design needs a dedicated spike; test SignPath's acceptance of a SEA-produced `.exe` before committing to SEA over dropping standalone binaries.
 
-Phases with standard patterns (skip research-phase):
-- **Phase 1:** Provider class patterns are fully documented in STACK.md + ARCHITECTURE.md. All four override implementations have pseudocode; `buildUrl` override has the exact code to copy.
-- **Phase 2:** Propagation pattern is mechanical; ARCHITECTURE.md Section 3 is a complete enumeration with line numbers.
-- **Phase 3:** Dashboard wiring mirrors Phase 2; no new patterns.
-
----
+Standard patterns (skip research-phase):
+- **Phase 1 (Package manager):** npm workspace mechanics well-documented; `workspace:*`→`*` is a known scripted find-replace.
+- **Phase 2 (Test runner):** `vitest`'s jest-compatible API is well-documented, migration path is mechanical.
+- **Phase 3 (Leaf modules):** each `Bun.*`→`node:*` swap is a documented 1:1 API mapping.
+- **Phase 6 (Dashboard build):** esbuild + Tailwind CLI replacement for `Bun.build()` is a standard pattern.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | Primary source: OpenRouter OpenAPI spec fetched 2026-06-02. `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent` schemas verified. NOTE: the documented SSE schema omits `cost`, but this is NOT evidence the field is absent at runtime — OpenRouter's `usage.cost` is an undocumented platform extension that v1.2 already reads from the final streaming event; confirm empirically in Phase 4. |
-| Features | HIGH | OpenRouter docs (endpoint schema, caching guide, provider routing, router metadata) fetched directly. MVP feature set is minimal and all dependencies already shipped in v1.1–v1.2. |
-| Architecture | HIGH | Direct codebase inspection with grep-backed enumeration of all `"openrouter"` literal sites. Every registration location confirmed with line numbers. |
-| Pitfalls | HIGH | All 11 pitfalls are grounded in specific codebase inspection (line numbers, method names) and OpenRouter spec schema details. No inference-only entries in the critical category. |
+| Stack | HIGH | All package versions verified via npm registry/downloads API in-session; `node:sqlite` WAL behavior hands-on verified against local Node v24.18.0; SEA cross-compile mechanics MEDIUM (docs/search only) |
+| Features | MEDIUM-HIGH | Codebase-specific findings verified by direct code inspection (HIGH); some ecosystem "best tool" claims are vendor-blog consensus (MEDIUM) |
+| Architecture | HIGH (codebase facts) / MEDIUM-HIGH (Node 24 API behavior) | Every codebase claim grounded in direct file reads with cited line numbers |
+| Pitfalls | MEDIUM-HIGH | Codebase facts HIGH confidence; Node/Bun API-difference claims MEDIUM-HIGH (cross-checked against official docs and open GitHub issues) |
 
 **Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Streaming cost: resolved, not open.** Mirror v1.2 — port `readFinalSseCost()`/`extractStreamingUsage()`/`parseUsage()` so streaming surfaces the real `usage.cost`. No estimate-vs-null decision needed. (Earlier draft's "no cost in SSE" claim was a faulty inference from the undocumented openapi.yaml schema.)
-- **Test model availability on `/api/v1/messages`:** `z-ai/glm-4.5-air:free` confirmed for OAI-format endpoint; native endpoint availability unverified. Resolve at Phase 1 start via a one-time live check using an `openrouter-anthropic` account with `x-better-ccflare-account-id`.
-- **`usage.cost` field empirical verification (streaming + non-streaming):** confirm the native endpoint's final SSE `message_delta` carries `usage.cost` (streaming) and the non-streaming body carries it too. Strong default: yes, since it's the same OpenRouter usage-accounting feature v1.2 already relies on. Confirm in the Phase 4 integration test.
-- **`session_id` injection:** Deferred to v1.3.x. If included, requires deriving a stable session token from connection/account context — not researched in depth.
-
----
+- **`node:sqlite` stabilization status** — STACK.md, ARCHITECTURE.md, and PITFALLS.md independently converge on Stability 1.1 "Active development" on Node 24 (RC only at 25.7, tracked via `nodejs/node#57445`), unanimously recommending `better-sqlite3`. Treat as settled; no further research needed unless the Node floor moves to 25+.
+- **`pg`'s BIGINT/NUMERIC string-coercion vs `Bun.SQL`'s current coercion** — needs a Phase 5 spike against real production columns, not resolved by desk research.
+- **`.github/workflows/docker-publish.yml` and `signpath-test.yml` Bun-reference audits are incomplete** — Phase 8 should start with a full line-by-line audit across all workflow files.
+- **The pre-push hook auto-updating `CLAUDE_CLI_VERSION`** was not inspectable in this research pass — re-verify it doesn't shell out to `bun` directly before declaring Phase 8 complete.
+- **Whether any code path beyond the type-only `@dqbd/tiktoken` import instantiates `Tiktoken` at runtime** — grepped and found none, but re-verify with a broader (including dynamic-import) search before treating the WASM-loading risk as fully moot.
+- **Node SEA's exact CI-matrix design** (which runners cover which of the 5 target platforms, arm64 coverage) needs a dedicated Phase 8 spike.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- `https://openrouter.ai/openapi.yaml` (fetched 2026-06-02) — `AnthropicUsage`, `MessagesResult`, `MessagesDeltaEvent`, `MessagesStartEvent`, `MessagesStopEvent`, `ProviderPreferences` schemas. The SSE schemas omit `cost`, but this is an undocumented platform extension (see usage-accounting docs) — schema absence ≠ runtime absence; verify empirically.
-- Direct codebase reading (2026-06-02) — `base-anthropic-compatible.ts`, `openrouter/provider.ts`, `anthropic-compatible/provider.ts`, `provider-config.ts`, `account.ts`, `accounts.ts`, `router.ts`, `AccountAddForm.tsx`, `AccountListItem.tsx`, `sse-rate-limit-sniffer.ts`, `usage-extraction.ts`, `post-processor.worker.ts`
-- Grep-backed enumeration of all `"openrouter"` literal sites across `packages/**`
+- Direct codebase reads: `apps/server/src/server.ts`, `packages/http-api/src/router.ts`, `packages/proxy/src/proxy.ts`, `packages/proxy/src/usage-worker-controller.ts`, `packages/database/src/adapters/bun-sql-adapter.ts`, `packages/database/src/database-operations.ts`, `packages/database/src/retry.ts`, `packages/database/src/migrations.ts`, `packages/database/src/integrity-check-runner.ts`, `packages/core/src/constants.ts`, `apps/cli/package.json`, `.github/workflows/release.yml`, `tsconfig.json`, all workspace `package.json` files
+- npm registry + npm downloads API — direct verification of `srvx@0.11.22`, `better-sqlite3@12.11.1`, `pg@8.22.0`, `vitest@4.1.10`
+- Local execution against Node v24.18.0 — `node:sqlite` load + WAL-mode verification
+- Node.js Single Executable Applications docs, Node.js worker_threads docs, nodejs/node issue #57445 (node:sqlite stabilization), nodejs/node issue #30682 (Worker eval as ES Module), npm/cli issue #8845 (workspace: protocol EUNSUPPORTEDPROTOCOL)
 
 ### Secondary (MEDIUM confidence)
-- `https://openrouter.ai/docs/guides/best-practices/prompt-caching` — cache TTL values, sticky routing behavior, per-block vs top-level caching modes
-- `https://openrouter.ai/docs/guides/routing/provider-selection` — `ProviderPreferences` field table
-- `https://openrouter.ai/docs/guides/features/response-caching` — cache hit behavior (zeroed tokens)
-- `https://openrouter.ai/docs/guides/features/router-metadata` — `openrouter_metadata` streaming delivery in `message_stop`
-- `https://openrouter.ai/docs/cookbook/coding-agents/claude-code-integration` — native Anthropic Messages passthrough pattern
-
-### Tertiary (LOW confidence)
-- `https://www.proredcat.xyz/blog/openrouter-cache-write-calculation` — early 2026 cache write token reporting change confirmation (external blog, corroborated by WebSearch findings)
+- srvx docs, vendor blog posts on Node SEA maturity, PkgPulse driver/runner comparisons
+- GitHub discussion threads on Bun ReadableStream batching behavior and SIGTERM handling gaps
 
 ---
-*Research completed: 2026-06-02*
+*Research completed: 2026-07-17*
 *Ready for roadmap: yes*
