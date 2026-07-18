@@ -4,7 +4,7 @@
  * Three sites guard against auto-refresh probe pollution:
  *   1. proxy-operations.ts  — isSyntheticInternal skips cacheBodyStore.stageRequest
  *   2. response-handler.ts  — shouldProcessRequest is false for auto-refresh probes
- *   3. proxy.ts             — pool-exhausted path skips usageWorker calls for probes
+ *   3. proxy.ts             — pool-exhausted path skips usageCollector calls for probes
  */
 import {
 	afterEach,
@@ -16,7 +16,7 @@ import {
 	spyOn,
 } from "bun:test";
 import type { Account } from "@better-ccflare/types";
-import * as proxyModule from "../proxy";
+import * as usageCollectorModule from "../usage-collector";
 
 // ---------------------------------------------------------------------------
 // Shared fixtures
@@ -58,25 +58,6 @@ function makeAccount(overrides: Partial<Account> = {}): Account {
 		refresh_token_issued_at: null,
 		...overrides,
 	};
-}
-
-/**
- * Creates a mock UsageWorkerController that intercepts postMessage calls.
- * isReady() returns true so that start/end messages are dispatched
- * (the real controller only dispatches non-chunk messages when ready).
- */
-function createMockWorkerController() {
-	const postedMessages: Array<Record<string, unknown>> = [];
-	const mockController = {
-		isReady: mock(() => true),
-		postMessage: mock((msg: Record<string, unknown>) => {
-			postedMessages.push(msg);
-		}),
-	};
-	const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-		mockController as unknown as ReturnType<typeof proxyModule.getUsageWorker>,
-	);
-	return { postedMessages, mockController, spy };
 }
 
 // ---------------------------------------------------------------------------
@@ -135,112 +116,113 @@ describe("proxy-operations — isSyntheticInternal header detection", () => {
 
 // ---------------------------------------------------------------------------
 // Site 2: shouldProcessRequest in response-handler.ts
-// Now spies on getUsageWorker (the worker controller seam) instead of getUsageCollector.
 // ---------------------------------------------------------------------------
 
 describe("response-handler — shouldProcessRequest suppresses auto-refresh probes", () => {
-	it("does not call usageWorker.postMessage for auto-refresh probe requests", async () => {
-		const { postedMessages, spy } = createMockWorkerController();
+	function createMockCollector() {
+		const handleStart = mock(() => {});
+		const handleChunk = mock(() => {});
+		const handleEnd = mock(() => Promise.resolve());
+		const collector = { handleStart, handleChunk, handleEnd };
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+		return { collector, handleStart, spy };
+	}
+
+	it("does not call usageCollector.handleStart for auto-refresh probe requests", async () => {
+		const { handleStart } = createMockCollector();
 		const { forwardToClient } = await import("../response-handler");
 
-		try {
-			const account = makeAccount();
+		const account = makeAccount();
 
-			const ctx = {
-				provider: {
-					name: "anthropic",
-					isStreamingResponse: () => false,
-				} as never,
-				config: { getStorePayloads: () => false } as never,
-			};
+		const ctx = {
+			provider: {
+				name: "anthropic",
+				isStreamingResponse: () => false,
+			} as never,
+			config: { getStorePayloads: () => false } as never,
+		};
 
-			const response = new Response(JSON.stringify({ type: "message" }), {
-				status: 200,
-				headers: { "Content-Type": "application/json" },
-			});
+		const response = new Response(JSON.stringify({ type: "message" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
 
-			const requestHeaders = new Headers({
-				"x-better-ccflare-auto-refresh": "true",
-			});
+		const requestHeaders = new Headers({
+			"x-better-ccflare-auto-refresh": "true",
+		});
 
-			await forwardToClient(
-				{
-					requestId: "req-probe",
-					method: "POST",
-					path: "/v1/messages",
-					account,
-					requestHeaders,
-					requestBody: null,
-					response,
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				ctx as never,
-			);
+		await forwardToClient(
+			{
+				requestId: "req-probe",
+				method: "POST",
+				path: "/v1/messages",
+				account,
+				requestHeaders,
+				requestBody: null,
+				response,
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx as never,
+		);
 
-			// No start message should be posted for probe requests
-			const startMessages = postedMessages.filter((m) => m.type === "start");
-			expect(startMessages.length).toBe(0);
-		} finally {
-			spy.mockRestore();
-		}
+		expect(handleStart).not.toHaveBeenCalled();
 	});
 
-	it("calls usageWorker.postMessage with start message for normal (non-probe) requests", async () => {
-		const { postedMessages, spy } = createMockWorkerController();
+	it("calls usageCollector.handleStart for normal (non-probe) requests", async () => {
+		const { handleStart } = createMockCollector();
 		const { forwardToClient } = await import("../response-handler");
 
-		try {
-			const account = makeAccount();
+		const account = makeAccount();
 
-			const ctx = {
-				provider: {
-					name: "anthropic",
-					isStreamingResponse: () => false,
-				} as never,
-				config: { getStorePayloads: () => false } as never,
-			};
+		const ctx = {
+			provider: {
+				name: "anthropic",
+				isStreamingResponse: () => false,
+			} as never,
+			config: { getStorePayloads: () => false } as never,
+		};
 
-			const response = new Response(JSON.stringify({ type: "message" }), {
-				status: 200,
-				headers: { "Content-Type": "application/json" },
-			});
+		const response = new Response(JSON.stringify({ type: "message" }), {
+			status: 200,
+			headers: { "Content-Type": "application/json" },
+		});
 
-			// No auto-refresh header
-			const requestHeaders = new Headers();
+		// No auto-refresh header
+		const requestHeaders = new Headers();
 
-			await forwardToClient(
-				{
-					requestId: "req-normal",
-					method: "POST",
-					path: "/v1/messages",
-					account,
-					requestHeaders,
-					requestBody: null,
-					response,
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				ctx as never,
-			);
+		await forwardToClient(
+			{
+				requestId: "req-normal",
+				method: "POST",
+				path: "/v1/messages",
+				account,
+				requestHeaders,
+				requestBody: null,
+				response,
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx as never,
+		);
 
-			// At minimum a "start" message should have been posted
-			const startMessages = postedMessages.filter((m) => m.type === "start");
-			expect(startMessages.length).toBeGreaterThan(0);
-		} finally {
-			spy.mockRestore();
-		}
+		// At minimum a "start" call should have happened
+		expect(handleStart).toHaveBeenCalled();
 	});
 });
 
 // ---------------------------------------------------------------------------
 // Site 3: pool-exhausted path in proxy.ts
-// Now spies on getUsageWorker (the worker controller seam) instead of getUsageCollector.
 // ---------------------------------------------------------------------------
 
-describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh probes", () => {
+describe("proxy.ts — pool-exhausted path skips usageCollector for auto-refresh probes", () => {
 	let savedPassthrough: string | undefined;
 
 	beforeEach(() => {
@@ -256,117 +238,119 @@ describe("proxy.ts — pool-exhausted path skips usageWorker for auto-refresh pr
 		}
 	});
 
-	it("does not call usageWorker when pool is exhausted and request is an auto-refresh probe", async () => {
-		const { postedMessages, spy } = createMockWorkerController();
+	function createMockCollector() {
+		const handleStart = mock(() => {});
+		const handleEnd = mock(() => Promise.resolve());
+		const collector = { handleStart, handleEnd, handleChunk: mock(() => {}) };
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
+		return { collector, handleStart, handleEnd, spy };
+	}
+
+	it("does not call usageCollector when pool is exhausted and request is an auto-refresh probe", async () => {
+		const { handleStart, handleEnd } = createMockCollector();
 		const { handleProxy } = await import("../proxy");
 
-		try {
-			const ctx = {
-				strategy: {
-					select: () => [],
-				} as never,
-				dbOps: {
-					getAllAccounts: mock(async () => []),
-					getActiveComboForFamily: mock(async () => null),
-				} as never,
-				runtime: { port: 8080, clientId: "test" } as never,
-				config: {
-					getUsageThrottlingFiveHourEnabled: () => false,
-					getUsageThrottlingWeeklyEnabled: () => false,
-					getSystemPromptCacheTtl1h: () => false,
-					getAgentFrontmatterModelFallback: () => false,
-				} as never,
-				provider: {
-					name: "anthropic",
-					canHandle: () => true,
-				} as never,
-				refreshInFlight: new Map(),
-				asyncWriter: { enqueue: mock(() => {}) } as never,
-			};
+		const ctx = {
+			strategy: {
+				select: () => [],
+			} as never,
+			dbOps: {
+				getAllAccounts: mock(async () => []),
+				getActiveComboForFamily: mock(async () => null),
+			} as never,
+			runtime: { port: 8080, clientId: "test" } as never,
+			config: {
+				getUsageThrottlingFiveHourEnabled: () => false,
+				getUsageThrottlingWeeklyEnabled: () => false,
+				getSystemPromptCacheTtl1h: () => false,
+				getAgentFrontmatterModelFallback: () => false,
+			} as never,
+			provider: {
+				name: "anthropic",
+				canHandle: () => true,
+			} as never,
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) } as never,
+		};
 
-			const probeRequest = new Request("https://proxy.local/v1/messages", {
-				method: "POST",
-				headers: {
-					"Content-Type": "application/json",
-					"x-better-ccflare-auto-refresh": "true",
-				},
-				body: JSON.stringify({
-					model: "claude-haiku-4-5",
-					messages: [{ role: "user", content: "hi" }],
-					max_tokens: 10,
-				}),
-			});
+		const probeRequest = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"x-better-ccflare-auto-refresh": "true",
+			},
+			body: JSON.stringify({
+				model: "claude-haiku-4-5",
+				messages: [{ role: "user", content: "hi" }],
+				max_tokens: 10,
+			}),
+		});
 
-			const response = await handleProxy(
-				probeRequest,
-				new URL("https://proxy.local/v1/messages"),
-				ctx as never,
-			);
+		const response = await handleProxy(
+			probeRequest,
+			new URL("https://proxy.local/v1/messages"),
+			ctx as never,
+		);
 
-			// Should still return 503
-			expect(response.status).toBe(503);
+		// Should still return 503
+		expect(response.status).toBe(503);
 
-			// But must NOT call usageWorker for probes
-			const startMessages = postedMessages.filter((m) => m.type === "start");
-			const endMessages = postedMessages.filter((m) => m.type === "end");
-			expect(startMessages.length).toBe(0);
-			expect(endMessages.length).toBe(0);
-		} finally {
-			spy.mockRestore();
-		}
+		// But must NOT call usageCollector
+		expect(handleStart).not.toHaveBeenCalled();
+		expect(handleEnd).not.toHaveBeenCalled();
 	});
 
-	it("calls usageWorker when pool is exhausted and request is NOT an auto-refresh probe", async () => {
-		const { postedMessages, spy } = createMockWorkerController();
+	it("calls usageCollector when pool is exhausted and request is NOT an auto-refresh probe", async () => {
+		const { handleStart } = createMockCollector();
 		const { handleProxy } = await import("../proxy");
 
-		try {
-			const ctx = {
-				strategy: {
-					select: () => [],
-				} as never,
-				dbOps: {
-					getAllAccounts: mock(async () => []),
-					getActiveComboForFamily: mock(async () => null),
-				} as never,
-				runtime: { port: 8080, clientId: "test" } as never,
-				config: {
-					getUsageThrottlingFiveHourEnabled: () => false,
-					getUsageThrottlingWeeklyEnabled: () => false,
-					getSystemPromptCacheTtl1h: () => false,
-					getAgentFrontmatterModelFallback: () => false,
-				} as never,
-				provider: {
-					name: "anthropic",
-					canHandle: () => true,
-				} as never,
-				refreshInFlight: new Map(),
-				asyncWriter: { enqueue: mock(() => {}) } as never,
-			};
+		const ctx = {
+			strategy: {
+				select: () => [],
+			} as never,
+			dbOps: {
+				getAllAccounts: mock(async () => []),
+				getActiveComboForFamily: mock(async () => null),
+			} as never,
+			runtime: { port: 8080, clientId: "test" } as never,
+			config: {
+				getUsageThrottlingFiveHourEnabled: () => false,
+				getUsageThrottlingWeeklyEnabled: () => false,
+				getSystemPromptCacheTtl1h: () => false,
+				getAgentFrontmatterModelFallback: () => false,
+			} as never,
+			provider: {
+				name: "anthropic",
+				canHandle: () => true,
+			} as never,
+			refreshInFlight: new Map(),
+			asyncWriter: { enqueue: mock(() => {}) } as never,
+		};
 
-			const normalRequest = new Request("https://proxy.local/v1/messages", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					model: "claude-haiku-4-5",
-					messages: [{ role: "user", content: "hi" }],
-					max_tokens: 10,
-				}),
-			});
+		const normalRequest = new Request("https://proxy.local/v1/messages", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				model: "claude-haiku-4-5",
+				messages: [{ role: "user", content: "hi" }],
+				max_tokens: 10,
+			}),
+		});
 
-			const response = await handleProxy(
-				normalRequest,
-				new URL("https://proxy.local/v1/messages"),
-				ctx as never,
-			);
+		const response = await handleProxy(
+			normalRequest,
+			new URL("https://proxy.local/v1/messages"),
+			ctx as never,
+		);
 
-			expect(response.status).toBe(503);
+		expect(response.status).toBe(503);
 
-			// Normal requests MUST be logged via the worker
-			const startMessages = postedMessages.filter((m) => m.type === "start");
-			expect(startMessages.length).toBeGreaterThan(0);
-		} finally {
-			spy.mockRestore();
-		}
+		// Normal requests MUST be logged
+		expect(handleStart).toHaveBeenCalled();
 	});
 });

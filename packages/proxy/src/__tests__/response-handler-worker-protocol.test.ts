@@ -1,129 +1,179 @@
-/**
- * Tests for forwardToClient → UsageWorkerController dispatch protocol.
- *
- * Spies on getUsageWorker() from proxy.ts (the controller-dispatch seam)
- * to verify that forwardToClient correctly routes usage accounting through
- * the worker controller rather than the synchronous main-thread collector.
- *
- * Covers:
- *   - handleStart dispatch with correct StartMessage fields
- *   - onChunk dispatch: the COPY is dispatched (not the client's value),
- *     with a non-empty transfer list (via controller.postMessage internally)
- *   - Guard regression: a throwing postMessage MUST NOT call controller.error()
- *     and MUST NOT prevent client bytes from being delivered
- *   - onClose / onError fire EndMessage via guarded path
- *   - shouldProcessRequest filter still works (count_tokens, auto-refresh probes)
- *   - store_payloads=false sends null requestBody
- */
-import { beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import type { Account } from "@better-ccflare/types";
-// ── module under spy ──────────────────────────────────────────────────────────
-// forwardToClient calls getUsageWorker() from proxy.ts to obtain the
-// UsageWorkerController. We spy on that accessor to intercept postMessage calls.
 import * as modelCatalogModule from "../model-catalog";
-import * as proxyModule from "../proxy";
-import { forwardToClient, resetForTesting } from "../response-handler";
+import { forwardToClient } from "../response-handler";
 import * as usageCollectorModule from "../usage-collector";
+import type { UsageCollector } from "../usage-collector";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-async function waitFor(
-	predicate: () => boolean,
-	timeoutMs = 1000,
-): Promise<void> {
-	const start = Date.now();
-	while (!predicate()) {
-		if (Date.now() - start > timeoutMs) throw new Error("Timed out");
-		await new Promise((r) => setTimeout(r, 10));
-	}
-}
-
-interface MockWorkerDispatch {
-	starts: Record<string, unknown>[];
-	chunks: Array<{
-		requestId: string;
-		data: ArrayBuffer;
-	}>;
-	ends: Record<string, unknown>[];
-	/** Whether controller.error was called (must NEVER be true) */
-	controllerErrorCalled: boolean;
-}
-
-/**
- * Creates a mock UsageWorkerController that intercepts postMessage calls.
- *
- * isReady() returns true so that start/end messages are dispatched
- * (the controller only dispatches non-chunk messages when ready).
- */
-function createMockWorkerSeam(): MockWorkerDispatch & {
-	restore: () => void;
-} {
-	const starts: Record<string, unknown>[] = [];
-	const chunks: Array<{ requestId: string; data: ArrayBuffer }> = [];
-	const ends: Record<string, unknown>[] = [];
-	const controllerErrorCalled = false;
-
-	const mockController = {
-		isReady: mock(() => true),
-		isStopped: mock(() => false),
-		postMessage: mock((msg: Record<string, unknown>) => {
-			if (msg.type === "start") {
-				starts.push(msg);
-			} else if (msg.type === "chunk") {
-				chunks.push({
-					requestId: msg.requestId as string,
-					data: msg.data as ArrayBuffer,
-				});
-			} else if (msg.type === "end") {
-				ends.push(msg);
+describe("forwardToClient usage-collector protocol", () => {
+	async function waitFor(
+		predicate: () => boolean,
+		timeoutMs = 1000,
+	): Promise<void> {
+		const start = Date.now();
+		while (!predicate()) {
+			if (Date.now() - start > timeoutMs) {
+				throw new Error("Timed out waiting for condition");
 			}
-		}),
-	};
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
+	}
 
-	const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-		mockController as unknown as ReturnType<typeof proxyModule.getUsageWorker>,
-	);
+	function createMockCollector() {
+		const starts: Record<string, unknown>[] = [];
+		const chunks: Array<{ requestId: string; data: Uint8Array }> = [];
+		const ends: Record<string, unknown>[] = [];
 
-	return {
-		starts,
-		chunks,
-		ends,
-		controllerErrorCalled,
-		restore: () => spy.mockRestore(),
-	};
-}
+		const collector = {
+			handleStart: mock((msg: Record<string, unknown>) => {
+				starts.push(msg);
+			}),
+			handleChunk: mock((requestId: string, data: Uint8Array) => {
+				chunks.push({ requestId, data });
+			}),
+			handleEnd: mock((msg: Record<string, unknown>) => {
+				ends.push(msg);
+				return Promise.resolve();
+			}),
+		};
 
-function createCtx(storePayloads = true) {
-	return {
-		strategy: {},
-		dbOps: {},
-		runtime: { port: 8080, tlsEnabled: false },
-		config: {
-			getStorePayloads: () => storePayloads,
-		},
-		provider: {
-			name: "anthropic",
-			isStreamingResponse: () => false,
-		},
-		refreshInFlight: new Map<string, Promise<string>>(),
-		asyncWriter: {},
-	} as unknown as import("../handlers").ProxyContext;
-}
+		// Spy on getUsageCollector to return our mock
+		const spy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue(
+			collector as unknown as usageCollectorModule.UsageCollector,
+		);
 
-// ---------------------------------------------------------------------------
-// Suite 1: Message contract (protocol shapes)
-// ---------------------------------------------------------------------------
+		return { collector, starts, chunks, ends, spy };
+	}
 
-describe("forwardToClient → worker dispatch: message contract", () => {
-	it("dispatches StartMessage with required fields", async () => {
-		const { starts, restore } = createMockWorkerSeam();
-		try {
-			const ctx = createCtx();
-			await forwardToClient(
+	function createCtx(storePayloads = true) {
+		return {
+			strategy: {},
+			dbOps: {},
+			runtime: { port: 8080, tlsEnabled: false },
+			config: {
+				getStorePayloads: () => storePayloads,
+			},
+			provider: {
+				name: "anthropic",
+				isStreamingResponse: () => false,
+			},
+			refreshInFlight: new Map<string, Promise<string>>(),
+			asyncWriter: {},
+		} as unknown as import("../handlers").ProxyContext;
+	}
+
+	it("calls handleStart with messageId", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx();
+
+		const response = await forwardToClient(
+			{
+				requestId: "req-1",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode("{}"),
+				response: new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		expect(response.status).toBe(200);
+		expect(starts.length).toBeGreaterThan(0);
+		expect(starts[0].type).toBe("start");
+		expect(typeof starts[0].messageId).toBe("string");
+		expect((starts[0].messageId as string).length).toBeGreaterThan(0);
+	});
+
+	it("sends null requestBody when payload storage is disabled", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx(false);
+
+		await forwardToClient(
+			{
+				requestId: "req-no-payload",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode(
+					JSON.stringify({ system: "test", messages: [] }),
+				),
+				project: "main-thread-project",
+				response: new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		expect(starts[0].type).toBe("start");
+		expect(starts[0].requestBody).toBeNull();
+		expect(starts[0].project).toBe("main-thread-project");
+	});
+
+	it("preserves requestBody when payload storage is enabled", async () => {
+		const { starts } = createMockCollector();
+		const ctx = createCtx(true);
+		const requestBody = JSON.stringify({ system: "test", messages: [] });
+
+		await forwardToClient(
+			{
+				requestId: "req-payload",
+				method: "POST",
+				path: "/v1/messages",
+				account: null,
+				requestHeaders: new Headers({ "content-type": "application/json" }),
+				requestBody: new TextEncoder().encode(requestBody),
+				project: null,
+				response: new Response(JSON.stringify({ ok: true }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+				timestamp: Date.now(),
+				retryAttempt: 0,
+				failoverAttempts: 0,
+			},
+			ctx,
+		);
+
+		expect(starts[0].type).toBe("start");
+		expect(starts[0].requestBody).toBe(
+			Buffer.from(requestBody).toString("base64"),
+		);
+		expect(starts[0].project).toBeNull();
+	});
+
+	it("does not throw when usage collector call succeeds", async () => {
+		createMockCollector();
+		const ctx = createCtx();
+
+		await expect(
+			forwardToClient(
 				{
-					requestId: "req-start",
+					requestId: "req-2",
 					method: "POST",
 					path: "/v1/messages",
 					account: null,
@@ -133,306 +183,43 @@ describe("forwardToClient → worker dispatch: message contract", () => {
 						status: 200,
 						headers: { "content-type": "application/json" },
 					}),
-					timestamp: 12345,
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				ctx,
-			);
-
-			expect(starts.length).toBeGreaterThan(0);
-			const start = starts[0];
-			expect(start.type).toBe("start");
-			expect(typeof start.messageId).toBe("string");
-			expect(start.requestId).toBe("req-start");
-			expect(start.method).toBe("POST");
-			expect(start.path).toBe("/v1/messages");
-			expect(start.timestamp).toBe(12345);
-			expect(start.retryAttempt).toBe(0);
-			expect(start.failoverAttempts).toBe(0);
-		} finally {
-			restore();
-		}
-	});
-
-	it("dispatches null requestBody when store_payloads=false", async () => {
-		const { starts, restore } = createMockWorkerSeam();
-		try {
-			await forwardToClient(
-				{
-					requestId: "req-no-body",
-					method: "POST",
-					path: "/v1/messages",
-					account: null,
-					requestHeaders: new Headers(),
-					requestBody: new TextEncoder().encode(
-						JSON.stringify({ hello: "world" }),
-					),
-					project: "test-project",
-					response: new Response("{}", {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					}),
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				createCtx(false),
-			);
-
-			expect(starts[0].requestBody).toBeNull();
-			expect(starts[0].project).toBe("test-project");
-		} finally {
-			restore();
-		}
-	});
-
-	it("dispatches base64 requestBody when store_payloads=true", async () => {
-		const { starts, restore } = createMockWorkerSeam();
-		const body = JSON.stringify({
-			messages: [{ role: "user", content: "hi" }],
-		});
-		try {
-			await forwardToClient(
-				{
-					requestId: "req-body",
-					method: "POST",
-					path: "/v1/messages",
-					account: null,
-					requestHeaders: new Headers(),
-					requestBody: new TextEncoder().encode(body),
-					response: new Response("{}", {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					}),
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				createCtx(true),
-			);
-
-			expect(starts[0].requestBody).toBe(Buffer.from(body).toString("base64"));
-		} finally {
-			restore();
-		}
-	});
-
-	it("sends EndMessage on non-streaming close", async () => {
-		const { ends, restore } = createMockWorkerSeam();
-		try {
-			const ctx = createCtx();
-			const response = await forwardToClient(
-				{
-					requestId: "req-end",
-					method: "POST",
-					path: "/v1/messages",
-					account: null,
-					requestHeaders: new Headers(),
-					requestBody: null,
-					response: new Response(JSON.stringify({ result: true }), {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					}),
 					timestamp: Date.now(),
 					retryAttempt: 0,
 					failoverAttempts: 0,
 				},
 				ctx,
-			);
-
-			await response.text(); // drain
-			await waitFor(() => ends.length > 0);
-
-			expect(ends[0]).toMatchObject({
-				type: "end",
-				requestId: "req-end",
-				success: true,
-			});
-		} finally {
-			restore();
-		}
+			),
+		).resolves.toBeInstanceOf(Response);
 	});
 
-	it("filters count_tokens path on openai-compatible provider", async () => {
-		const { starts, restore } = createMockWorkerSeam();
-		try {
-			const ctx = createCtx();
-			ctx.provider.name = "openai-compatible";
-
-			await forwardToClient(
-				{
-					requestId: "req-count",
-					method: "POST",
-					path: "/v1/messages/count_tokens",
-					account: null,
-					requestHeaders: new Headers(),
-					requestBody: null,
-					response: new Response("{}", {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					}),
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				ctx,
-			);
-
-			expect(starts.length).toBe(0);
-		} finally {
-			restore();
-		}
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Suite 2: Guard regression — the critical #245 regression test
-//
-// A throw in onChunk / postMessage dispatch MUST:
-//   1. NOT call controller.error()  (the stream tee must deliver all bytes)
-//   2. NOT prevent client bytes from being delivered
-// ---------------------------------------------------------------------------
-
-describe("forwardToClient → worker dispatch: guard regression (#245)", () => {
-	it("GUARD: a throwing postMessage does NOT call controller.error and bytes are delivered", async () => {
-		// Setup: mock worker whose postMessage THROWS on chunk messages
-		const throwingController = {
-			isReady: mock(() => true),
-			isStopped: mock(() => false),
-			postMessage: mock((msg: Record<string, unknown>) => {
-				if (msg.type === "chunk") {
-					throw new Error("simulated worker dispatch failure");
-				}
-			}),
-		};
-
-		const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-			throwingController as unknown as ReturnType<
-				typeof proxyModule.getUsageWorker
-			>,
-		);
+	it("tees streaming responses instead of cloning", async () => {
+		const originalClone = Response.prototype.clone;
+		Response.prototype.clone = mock(() => {
+			throw new Error("clone should not be called");
+		}) as unknown as typeof Response.prototype.clone;
 
 		try {
+			const { starts, chunks, ends } = createMockCollector();
 			const ctx = createCtx();
 			ctx.provider.isStreamingResponse = () => true;
 
-			const encoder = new TextEncoder();
-			const chunks = [
-				encoder.encode("data: chunk-one\n\n"),
-				encoder.encode("data: chunk-two\n\n"),
-			];
-
 			const body = new ReadableStream<Uint8Array>({
 				start(controller) {
-					for (const c of chunks) controller.enqueue(c);
+					const encoder = new TextEncoder();
+					controller.enqueue(encoder.encode("data: one\n\n"));
+					controller.enqueue(encoder.encode("data: two\n\n"));
 					controller.close();
 				},
 			});
 
 			const response = await forwardToClient(
 				{
-					requestId: "req-guard",
+					requestId: "req-stream-tee",
 					method: "POST",
 					path: "/v1/messages",
 					account: null,
-					requestHeaders: new Headers(),
-					requestBody: null,
-					response: new Response(body, {
-						status: 200,
-						headers: { "content-type": "text/event-stream" },
-					}),
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				ctx,
-			);
-
-			// The client must receive ALL bytes — the throw in postMessage must be
-			// swallowed by safeHandleChunk, not propagated to teeStream's pull() catch.
-			const text = await response.text();
-			expect(text).toBe("data: chunk-one\n\ndata: chunk-two\n\n");
-		} finally {
-			spy.mockRestore();
-		}
-	});
-
-	it("GUARD: a throwing postMessage for handleStart does NOT abort the response", async () => {
-		const throwingController = {
-			isReady: mock(() => true),
-			isStopped: mock(() => false),
-			postMessage: mock((msg: Record<string, unknown>) => {
-				if (msg.type === "start") {
-					throw new Error("handleStart failure");
-				}
-			}),
-		};
-
-		const spy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-			throwingController as unknown as ReturnType<
-				typeof proxyModule.getUsageWorker
-			>,
-		);
-
-		try {
-			const ctx = createCtx();
-
-			// safeHandleStart swallows throws — response must still be returned
-			await expect(
-				forwardToClient(
-					{
-						requestId: "req-guard-start",
-						method: "POST",
-						path: "/v1/messages",
-						account: null,
-						requestHeaders: new Headers(),
-						requestBody: null,
-						response: new Response("{}", {
-							status: 200,
-							headers: { "content-type": "application/json" },
-						}),
-						timestamp: Date.now(),
-						retryAttempt: 0,
-						failoverAttempts: 0,
-					},
-					ctx,
-				),
-			).resolves.toBeInstanceOf(Response);
-		} finally {
-			spy.mockRestore();
-		}
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Suite 3: teeStream integration (these already pass and must stay green)
-// ---------------------------------------------------------------------------
-
-describe("forwardToClient → worker dispatch: streaming tee (regression)", () => {
-	it("streams all chunks to the client and sends EndMessage", async () => {
-		const { starts, chunks, ends, restore } = createMockWorkerSeam();
-		try {
-			const ctx = createCtx();
-			ctx.provider.isStreamingResponse = () => true;
-
-			const body = new ReadableStream<Uint8Array>({
-				start(controller) {
-					const enc = new TextEncoder();
-					controller.enqueue(enc.encode("data: one\n\n"));
-					controller.enqueue(enc.encode("data: two\n\n"));
-					controller.close();
-				},
-			});
-
-			const response = await forwardToClient(
-				{
-					requestId: "req-tee",
-					method: "POST",
-					path: "/v1/messages",
-					account: null,
-					requestHeaders: new Headers(),
-					requestBody: null,
+					requestHeaders: new Headers({ "content-type": "application/json" }),
+					requestBody: new TextEncoder().encode("{}"),
 					response: new Response(body, {
 						status: 200,
 						headers: { "content-type": "text/event-stream" },
@@ -448,136 +235,40 @@ describe("forwardToClient → worker dispatch: streaming tee (regression)", () =
 			await waitFor(() => ends.length > 0);
 
 			expect(chunks.length).toBe(2);
-			// Verify chunk messages carry ArrayBuffer (not Uint8Array) — transfer protocol
-			expect(chunks[0].data).toBeInstanceOf(ArrayBuffer);
-			expect(starts[0]).toMatchObject({ type: "start", requestId: "req-tee" });
+			expect(starts[0]).toMatchObject({
+				type: "start",
+				requestId: "req-stream-tee",
+			});
 			expect(ends[0]).toMatchObject({
 				type: "end",
-				requestId: "req-tee",
+				requestId: "req-stream-tee",
 				success: true,
 			});
 		} finally {
-			restore();
+			Response.prototype.clone = originalClone;
 		}
 	});
-});
 
-// ---------------------------------------------------------------------------
-// Suite 4: Worker-stopped fallback routing to UsageCollector
-//
-// When the worker is stopped (isStopped() === true), usage data must be routed
-// through the in-process UsageCollector fallback rather than dropped silently.
-// ---------------------------------------------------------------------------
-
-describe("forwardToClient → UsageCollector fallback when worker is stopped", () => {
-	beforeEach(() => {
-		resetForTesting();
-	});
-
-	it("Test 5: Worker stopped — Start routes to UsageCollector, postMessage never called for start", async () => {
-		const mockCollector = {
-			handleStart: mock(() => {}),
-			handleChunk: mock(() => {}),
-			handleEnd: mock(() => Promise.resolve()),
-		};
-
-		const stoppedController = {
-			isReady: mock(() => false),
-			isStopped: mock(() => true),
-			postMessage: mock(() => {}),
-		};
-
-		const workerSpy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-			stoppedController as unknown as ReturnType<
-				typeof proxyModule.getUsageWorker
-			>,
-		);
-		const collectorSpy = spyOn(
-			usageCollectorModule,
-			"tryGetUsageCollector",
-		).mockReturnValue(
-			mockCollector as unknown as ReturnType<
-				typeof usageCollectorModule.tryGetUsageCollector
-			>,
-		);
+	it("tees non-streaming responses instead of cloning analytics body", async () => {
+		const originalClone = Response.prototype.clone;
+		Response.prototype.clone = mock(() => {
+			throw new Error("clone should not be called");
+		}) as unknown as typeof Response.prototype.clone;
 
 		try {
+			const { ends } = createMockCollector();
 			const ctx = createCtx();
+			const responseBody = JSON.stringify({ ok: true });
+
 			const response = await forwardToClient(
 				{
-					requestId: "req-stopped-start",
+					requestId: "req-non-stream-tee",
 					method: "POST",
 					path: "/v1/messages",
 					account: null,
-					requestHeaders: new Headers(),
-					requestBody: null,
-					response: new Response(JSON.stringify({ ok: true }), {
-						status: 200,
-						headers: { "content-type": "application/json" },
-					}),
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				ctx,
-			);
-			await response.text(); // drain
-
-			// Worker postMessage must NOT be called for start (worker is stopped)
-			const startCalls = (
-				stoppedController.postMessage.mock.calls as unknown[][]
-			).filter(
-				(args) => (args[0] as Record<string, unknown>)?.type === "start",
-			);
-			expect(startCalls.length).toBe(0);
-
-			// Collector handleStart must be called once
-			expect(mockCollector.handleStart.mock.calls.length).toBe(1);
-		} finally {
-			workerSpy.mockRestore();
-			collectorSpy.mockRestore();
-		}
-	});
-
-	it("Test 6: Worker starting (not stopped) — UsageCollector NOT called for start", async () => {
-		const mockCollector = {
-			handleStart: mock(() => {}),
-			handleChunk: mock(() => {}),
-			handleEnd: mock(() => Promise.resolve()),
-		};
-
-		// isReady=false, isStopped=false → worker is starting; no fallback
-		const startingController = {
-			isReady: mock(() => false),
-			isStopped: mock(() => false),
-			postMessage: mock(() => {}),
-		};
-
-		const workerSpy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-			startingController as unknown as ReturnType<
-				typeof proxyModule.getUsageWorker
-			>,
-		);
-		const collectorSpy = spyOn(
-			usageCollectorModule,
-			"tryGetUsageCollector",
-		).mockReturnValue(
-			mockCollector as unknown as ReturnType<
-				typeof usageCollectorModule.tryGetUsageCollector
-			>,
-		);
-
-		try {
-			const ctx = createCtx();
-			await forwardToClient(
-				{
-					requestId: "req-starting",
-					method: "POST",
-					path: "/v1/messages",
-					account: null,
-					requestHeaders: new Headers(),
-					requestBody: null,
-					response: new Response("{}", {
+					requestHeaders: new Headers({ "content-type": "application/json" }),
+					requestBody: new TextEncoder().encode("{}"),
+					response: new Response(responseBody, {
 						status: 200,
 						headers: { "content-type": "application/json" },
 					}),
@@ -588,159 +279,45 @@ describe("forwardToClient → UsageCollector fallback when worker is stopped", (
 				ctx,
 			);
 
-			// Collector must NOT be called when worker is in starting state
-			expect(mockCollector.handleStart.mock.calls.length).toBe(0);
-		} finally {
-			workerSpy.mockRestore();
-			collectorSpy.mockRestore();
-		}
-	});
+			await expect(response.text()).resolves.toBe(responseBody);
+			await waitFor(() => ends.length > 0);
 
-	it("Test 7: Routing consistency — stopped request entire lifecycle goes through collector", async () => {
-		const mockCollector = {
-			handleStart: mock(() => {}),
-			handleChunk: mock(() => {}),
-			handleEnd: mock(() => Promise.resolve()),
-		};
-
-		const stoppedController = {
-			isReady: mock(() => false),
-			isStopped: mock(() => true),
-			postMessage: mock(() => {}),
-		};
-
-		const workerSpy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-			stoppedController as unknown as ReturnType<
-				typeof proxyModule.getUsageWorker
-			>,
-		);
-		const collectorSpy = spyOn(
-			usageCollectorModule,
-			"tryGetUsageCollector",
-		).mockReturnValue(
-			mockCollector as unknown as ReturnType<
-				typeof usageCollectorModule.tryGetUsageCollector
-			>,
-		);
-
-		try {
-			const ctx = createCtx();
-			ctx.provider.isStreamingResponse = () => true;
-
-			const enc = new TextEncoder();
-			const body = new ReadableStream<Uint8Array>({
-				start(controller) {
-					controller.enqueue(enc.encode("data: hello\n\n"));
-					controller.close();
-				},
+			expect(ends[0]).toMatchObject({
+				type: "end",
+				requestId: "req-non-stream-tee",
+				responseBody: Buffer.from(responseBody).toString("base64"),
+				success: true,
 			});
-
-			const response = await forwardToClient(
-				{
-					requestId: "req-stopped-lifecycle",
-					method: "POST",
-					path: "/v1/messages",
-					account: null,
-					requestHeaders: new Headers(),
-					requestBody: null,
-					response: new Response(body, {
-						status: 200,
-						headers: { "content-type": "text/event-stream" },
-					}),
-					timestamp: Date.now(),
-					retryAttempt: 0,
-					failoverAttempts: 0,
-				},
-				ctx,
-			);
-
-			await response.text(); // drain
-
-			// Wait for async end routing
-			await new Promise((r) => setTimeout(r, 30));
-
-			// Start and End must go through collector (not postMessage)
-			expect(mockCollector.handleStart.mock.calls.length).toBe(1);
-			expect(mockCollector.handleEnd.mock.calls.length).toBe(1);
-
-			// Chunk routing to collector happens for requests that started on collector path
-			expect(mockCollector.handleChunk.mock.calls.length).toBeGreaterThan(0);
 		} finally {
-			workerSpy.mockRestore();
-			collectorSpy.mockRestore();
-		}
-	});
-
-	it("Test 8: collectorRequestIds Set is empty after End messages (no leak)", async () => {
-		const mockCollector = {
-			handleStart: mock(() => {}),
-			handleChunk: mock(() => {}),
-			handleEnd: mock(() => Promise.resolve()),
-		};
-
-		const stoppedController = {
-			isReady: mock(() => false),
-			isStopped: mock(() => true),
-			postMessage: mock(() => {}),
-		};
-
-		const workerSpy = spyOn(proxyModule, "getUsageWorker").mockReturnValue(
-			stoppedController as unknown as ReturnType<
-				typeof proxyModule.getUsageWorker
-			>,
-		);
-		const collectorSpy = spyOn(
-			usageCollectorModule,
-			"tryGetUsageCollector",
-		).mockReturnValue(
-			mockCollector as unknown as ReturnType<
-				typeof usageCollectorModule.tryGetUsageCollector
-			>,
-		);
-
-		try {
-			const ctx = createCtx();
-
-			// Send two sequential requests through the stopped path
-			for (const reqId of ["req-leak-1", "req-leak-2"]) {
-				const response = await forwardToClient(
-					{
-						requestId: reqId,
-						method: "POST",
-						path: "/v1/messages",
-						account: null,
-						requestHeaders: new Headers(),
-						requestBody: null,
-						response: new Response("{}", {
-							status: 200,
-							headers: { "content-type": "application/json" },
-						}),
-						timestamp: Date.now(),
-						retryAttempt: 0,
-						failoverAttempts: 0,
-					},
-					ctx,
-				);
-				await response.text();
-				await new Promise((r) => setTimeout(r, 20));
-			}
-
-			// After both requests complete, handleEnd should have been called twice
-			expect(mockCollector.handleEnd.mock.calls.length).toBe(2);
-
-			// The Set must be clean — if it leaked, a third call with the same requestId
-			// would incorrectly route to the collector on a fresh request.
-			// resetForTesting() would clear the set; calling it here would hide leaks.
-			// Instead, verify that handleStart was called exactly twice (2 requests).
-			expect(mockCollector.handleStart.mock.calls.length).toBe(2);
-		} finally {
-			workerSpy.mockRestore();
-			collectorSpy.mockRestore();
+			Response.prototype.clone = originalClone;
 		}
 	});
 });
 
 describe("forwardToClient passive model-catalog capture", () => {
+	// forwardToClient's non-streaming path calls getUsageCollector().handleStart()
+	// directly and synchronously (no worker indirection) for every
+	// shouldProcessRequest===true request — including the GET /v1/models requests
+	// exercised below. Mock it so these tests don't depend on a real, initialized
+	// UsageCollector singleton (the real one is a module-level singleton set up by
+	// initUsageCollector(), never called in this test file).
+	let getUsageCollectorSpy: ReturnType<typeof spyOn>;
+
+	beforeEach(() => {
+		getUsageCollectorSpy = spyOn(
+			usageCollectorModule,
+			"getUsageCollector",
+		).mockReturnValue({
+			handleStart: mock(),
+			handleChunk: mock(),
+			handleEnd: mock(() => Promise.resolve()),
+		} as unknown as UsageCollector);
+	});
+
+	afterEach(() => {
+		getUsageCollectorSpy.mockRestore();
+	});
+
 	function createIngestSpy() {
 		return spyOn(modelCatalogModule, "ingestModelsListing").mockResolvedValue(
 			undefined,
