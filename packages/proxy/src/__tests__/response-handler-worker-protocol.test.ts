@@ -10,8 +10,8 @@ import {
 import type { Account } from "@better-ccflare/types";
 import * as modelCatalogModule from "../model-catalog";
 import { forwardToClient } from "../response-handler";
-import * as usageCollectorModule from "../usage-collector";
 import type { UsageCollector } from "../usage-collector";
+import * as usageCollectorModule from "../usage-collector";
 
 describe("forwardToClient usage-collector protocol", () => {
 	async function waitFor(

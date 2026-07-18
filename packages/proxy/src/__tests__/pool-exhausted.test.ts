@@ -10,8 +10,8 @@ import {
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { handleProxy } from "../proxy";
-import * as usageCollectorModule from "../usage-collector";
 import type { UsageCollector } from "../usage-collector";
+import * as usageCollectorModule from "../usage-collector";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
