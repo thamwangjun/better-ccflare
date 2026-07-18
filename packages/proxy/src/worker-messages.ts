@@ -73,26 +73,10 @@ export function isModelRewrite(
 	return !!originalModel && !!appliedModel && originalModel !== appliedModel;
 }
 
-/**
- * ChunkMessage carries a transferable ArrayBuffer.
- *
- * TRANSFER CONTRACT: the producer calls
- *   const copy = value.slice();
- *   postMessage({ type: "chunk", requestId, data: copy.buffer }, [copy.buffer]);
- *
- * The copy is a fresh ArrayBuffer (byteOffset === 0, own backing store) produced
- * from the client-enqueued Uint8Array via value.slice(). The COPY's buffer is
- * transferred (moved, zero-copy); the client's original `value` is never touched.
- * After transfer, copy.buffer.byteLength === 0 (detached).
- *
- * Rationale: in stream-tee.ts the SAME value is enqueued to the client (line 39)
- * and then passed to onChunk (line 56). Transferring value.buffer would detach
- * the client's bytes. Always slice first, then transfer the slice's buffer.
- */
 export interface ChunkMessage {
 	type: "chunk";
 	requestId: string;
-	data: ArrayBuffer;
+	data: Uint8Array;
 }
 
 export interface EndMessage {

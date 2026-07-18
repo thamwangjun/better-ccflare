@@ -1,7 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it, mock } from "bun:test";
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	mock,
+	spyOn,
+} from "bun:test";
 import type { Account } from "@better-ccflare/types";
 import type { ProxyContext } from "../handlers";
 import { handleProxy } from "../proxy";
+import * as usageCollectorModule from "../usage-collector";
+import type { UsageCollector } from "../usage-collector";
 
 function makeAccount(overrides: Partial<Account> = {}): Account {
 	return {
@@ -84,10 +94,23 @@ function makeRequest(): Request {
 }
 
 let savedPassthrough: string | undefined;
+let getUsageCollectorSpy: ReturnType<typeof spyOn>;
 
 beforeEach(() => {
 	savedPassthrough = process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
 	delete process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL;
+
+	// handleProxy's pool-exhausted branch now calls getUsageCollector() directly
+	// and synchronously (no worker indirection) — mock it so these tests don't
+	// depend on a real, initialized UsageCollector singleton.
+	getUsageCollectorSpy = spyOn(
+		usageCollectorModule,
+		"getUsageCollector",
+	).mockReturnValue({
+		handleStart: mock(),
+		handleChunk: mock(),
+		handleEnd: mock(() => Promise.resolve()),
+	} as unknown as UsageCollector);
 });
 
 afterEach(() => {
@@ -96,6 +119,7 @@ afterEach(() => {
 	} else {
 		process.env.CCFLARE_PASSTHROUGH_ON_EMPTY_POOL = savedPassthrough;
 	}
+	getUsageCollectorSpy.mockRestore();
 });
 
 describe("pool exhausted — 503 response", () => {
