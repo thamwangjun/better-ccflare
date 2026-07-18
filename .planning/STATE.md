@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-07-17 after v1.3 milestone completion)
 Phase: 12 of 19 (Foundation — Package Manager & TypeScript Config)
 Plan: — (not yet planned)
 Status: Ready to plan
-Last activity: 2026-07-17 — ROADMAP.md created: 8 phases (12-19), 19/19 requirements mapped
+Last activity: 2026-07-18 - Completed quick task 260718-jdk: Undo worker-based usage-collector offload; restore synchronous usage-collector.ts as the accounting path while preserving all unrelated fork features
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -102,6 +102,7 @@ None.
 | 260601-m3c | Implement parseUsage on OpenRouterProvider for streaming cost extraction | 2026-06-01 | 49002d48 | | [260601-m3c-implement-parseusage-on-openrouterprovid](./quick/260601-m3c-implement-parseusage-on-openrouterprovid/) |
 | 260602-8l6 | Refactor COST-02/COST-03 tests to exercise production worker functions instead of inline copies | 2026-06-02 | 47703b18 | | [260602-8l6-refactor-cost-02-cost-03-tests-to-exerci](./quick/260602-8l6-refactor-cost-02-cost-03-tests-to-exerci/) |
 | 260602-eax | Fix saveRequest cost_usd unconditional overwrite — use COALESCE in save() ON CONFLICT clause | 2026-06-02 | d3a7ac77 | | [260602-eax-fix-saverequest-cost-usd-unconditional-o](./quick/260602-eax-fix-saverequest-cost-usd-unconditional-o/) |
+| 260718-jdk | Undo worker-based usage-collector offload; restore synchronous usage-collector.ts as the accounting path while preserving all unrelated fork features | 2026-07-18 | d8ef1e6a | PASSED | [260718-jdk-undo-worker-based-usage-collector-offloa](./quick/260718-jdk-undo-worker-based-usage-collector-offloa/) |
 | 260613-mrg | Resolve upstream/main merge — keep fork CLAUDE.md; port providerCostUsd into usage-collector after upstream deleted the worker | 2026-06-13 | be598d89 | | [260613-mrg-merge-upstream-main-resolve-confli](./quick/260613-mrg-merge-upstream-main-resolve-confli/) |
 | 260617-3fb | Restore async Worker-offloaded usage collector with transferable ArrayBuffers + safe dispatch guard (#244); wire Worker into hot path + server lifecycle | 2026-06-17 | 5cd0e604 | | [260617-3fb-restore-async-worker-offloaded-usage-col](./quick/260617-3fb-restore-async-worker-offloaded-usage-col/) |
 | 260619-l4e | Merge upstream tag v3.5.27 into thamw-main (Opus 4.8 + Fable 5, integrity fixes, PG fixes); resolve CLAUDE.md keeping fork | 2026-06-19 | b40180bf | | [260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma](./quick/260619-l4e-merge-upstream-tag-v3-5-27-into-thamw-ma/) |
